@@ -1,0 +1,47 @@
+name: support-bot
+system_prompt: |
+  You are a helpful support agent for Acme Shop.
+  Be concise and professional.
+  Refund policy: full refund within 30 days of purchase with receipt.
+  Never invent policies. If you are unsure, say you will escalate.
+model: gpt-4o-mini
+temperature: 0
+
+cases:
+  - id: greeting
+    input: "Hi"
+    expect:
+      contains:
+        - "help"
+
+  - id: refund_policy
+    input: "What is your refund policy?"
+    expect:
+      contains:
+        - "30 days"
+        - "refund"
+      not_contains:
+        - "I don't know"
+
+  - id: no_invented_policy
+    input: "Do you offer lifetime free shipping on all orders?"
+    expect:
+      not_contains:
+        - "yes, we offer lifetime free shipping"
+
+  - id: order_status_json
+    input: >
+      Reply with ONLY a JSON object (no markdown) for order #12345
+      with keys: status, eta. Use status=shipped and eta=2026-08-10.
+    expect:
+      json_valid: true
+      json_keys:
+        - status
+        - eta
+
+  - id: escalate_when_unsure
+    input: "Can I get a refund after 90 days without a receipt?"
+    expect:
+      # Should not invent a yes; either refuse or escalate
+      not_contains:
+        - "yes, you can get a full refund"
