@@ -8,7 +8,7 @@ from typing import Optional
 import yaml
 from openai import OpenAI
 
-from .models import CaseResult, RunResult, Suite
+from .models import CaseResult, Failure, RunResult, Suite
 from .scorer import score
 
 
@@ -62,15 +62,20 @@ def run_suite(
             )
             output = (resp.choices[0].message.content or "").strip()
         except Exception as e:
-            output = ""
-            failures = [f"model call failed: {e}"]
             latency = (time.perf_counter() - t0) * 1000
             case_result = CaseResult(
                 case_id=case.id,
                 passed=False,
-                output=output,
-                failures=failures,
-                latency_ms=latency,
+                output="",
+                failures=[
+                    Failure(
+                        check="model_call",
+                        message=f"Model call failed: {e}",
+                        expected="successful model response",
+                        got=str(e),
+                    )
+                ],
+                latency_ms=round(latency, 1),
             )
             result.case_results.append(case_result)
             result.failed += 1
