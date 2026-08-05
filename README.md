@@ -7,6 +7,8 @@ Something that used to work now fails — and nobody notices until a user compla
 
 PromptGuard lets you record *golden behaviors*, re-run them after every change, and see exactly what broke.
 
+**Current version: 0.1.1**
+
 ---
 
 ## The Real Pain
@@ -18,34 +20,18 @@ Teams shipping LLM features almost never have real regression tests.
 - “Vibe checks” in the chat UI don’t scale past a handful of examples
 - There is no CI signal for “this prompt change is safe”
 
-Existing eval tools are either heavy research frameworks or one-off notebooks.  
 **PromptGuard is the missing middle**: a small, focused regression suite you actually run every time you touch a prompt.
 
 ---
 
-## What it does (v0.1)
+## What it does
 
 1. Define **golden cases** (input + expected behavior)
-2. Group them into a **suite** (YAML/JSON)
-3. **Run** the suite against your current model + system prompt
-4. Score each case with simple, reliable checks:
-   - `contains` / `not_contains`
-   - `regex`
-   - `exact` (normalized)
-   - `json_valid` + optional key presence
-5. Get a clear **pass/fail report** with diffs
-6. Store run history locally so you can compare over time
-
-No agents. No giant eval platform. Just regression tests for prompts.
-
----
-
-## Why this can become a product
-
-- Every team with an LLM feature in production feels this pain weekly
-- High willingness to pay for “don’t break what already works”
-- Natural expansion: CI action → shared suite repo → semantic scoring → prompt versioning
-- The hard part is *discipline + clear failure signals*, not fancy ML
+2. Group them into a **suite** (YAML)
+3. **Run** against your current model + system prompt
+4. Score with deterministic checks: `contains`, `not_contains`, `regex`, `exact`, `json_valid`, `json_keys`
+5. Get a **readable report** with summary table, latency, and expected-vs-got diffs
+6. Store run history locally (`~/.promptguard/runs/`)
 
 ---
 
@@ -57,33 +43,41 @@ cd PromptGuard
 pip install -r requirements.txt
 
 export OPENAI_API_KEY="sk-..."
+
+python -m promptguard run examples/support_bot_suite.yaml
+python -m promptguard run examples/support_bot_suite.yaml -v   # verbose
 ```
 
-### 1. Write a suite
-
-See `examples/support_bot_suite.yaml`.
-
-### 2. Run it
+Other providers:
 
 ```bash
-python -m promptguard run examples/support_bot_suite.yaml
+python -m promptguard run examples/support_bot_suite.yaml \
+  --base-url https://api.groq.com/openai/v1 \
+  --model llama-3.3-70b-versatile
 ```
 
-### 3. Read the report
+### Example report
 
 ```text
-Suite: support-bot
-Model: gpt-4o-mini
-Passed: 4/5
+Suite  : support-bot
+Model  : gpt-4o-mini  (temp=0.0)
+Result : 4/5 passed  1 failed
 
-FAIL  refund_policy_tone
-  expected contains: "refund"
-  got: "I can help you with your order status..."
+ PASS  greeting          420ms   —
+ PASS  refund_policy     510ms   —
+ FAIL  order_status_json 380ms   1
+
+Failures
+
+FAIL  order_status_json
+  • [json_key] Missing JSON key: "eta"
+      expected  key "eta" present
+      got       keys: ['status']
 ```
 
 ---
 
-## Suite format (minimal)
+## Suite format
 
 ```yaml
 name: support-bot
@@ -97,7 +91,7 @@ cases:
   - id: greeting
     input: "Hi"
     expect:
-      contains: ["help", "assist"]
+      contains: ["help"]
 
   - id: refund_policy
     input: "What is your refund policy?"
@@ -105,12 +99,24 @@ cases:
       contains: ["30 days", "refund"]
       not_contains: ["I don't know"]
 
-  - id: json_order_status
-    input: "Return order status for #12345 as JSON with keys status and eta"
+  - id: order_status_json
+    input: "Return ONLY JSON with keys status and eta for order #12345"
     expect:
       json_valid: true
       json_keys: ["status", "eta"]
 ```
+
+---
+
+## CLI
+
+```bash
+python -m promptguard run <suite.yaml> [--model ...] [--base-url ...] [-v]
+python -m promptguard list-runs
+python -m promptguard show-run <run_id> [-v]
+```
+
+Exit code `1` if any case fails → CI-ready.
 
 ---
 
@@ -121,65 +127,32 @@ Suite (YAML)
     │
     ▼
 ┌─────────────────────┐
-│  Runner             │  calls model once per case
+│  Runner             │  one model call per case
 └──────────┬──────────┘
            │
            ▼
 ┌─────────────────────┐
-│  Scorer             │  contains / regex / exact / json checks
+│  Scorer             │  structured Failure{check, expected, got}
 └──────────┬──────────┘
            │
            ▼
 ┌─────────────────────┐
-│  Report + History   │  local JSON runs under ~/.promptguard/
+│  Report + History   │  table + diffs + ~/.promptguard/runs/
 └─────────────────────┘
-```
-
-Design principles:
-- Deterministic checks first (semantic scoring can come later)
-- One case = one clear expectation
-- Failures must be readable in 5 seconds
-- Local-first, CI-friendly exit codes
-
----
-
-## CLI
-
-```bash
-python -m promptguard run <suite.yaml> [--model ...] [--base-url ...]
-python -m promptguard list-runs
-python -m promptguard show-run <run_id>
-```
-
-Exit code `1` if any case fails → drop straight into CI.
-
----
-
-## Project Structure
-
-```
-src/promptguard/
-├── cli.py          # run / list-runs / show-run
-├── models.py       # Suite, Case, Expect, RunResult
-├── runner.py       # execute suite against LLM
-├── scorer.py       # expectation checks
-└── store.py        # local run history
-examples/
-└── support_bot_suite.yaml
 ```
 
 ---
 
 ## Roadmap
 
-**v0.1 (this)**  
-Suite format · deterministic scorers · CLI run · local history · CI exit codes
+**v0.1.1 (current)**  
+Structured failures · expected-vs-got diffs · summary table · latency · verbose mode
 
-**v0.2**  
-Semantic similarity option · prompt snapshotting · richer diffs · JUnit XML
+**Next**  
+Second example suite · optional semantic similarity · JUnit XML
 
 **Later**  
-GitHub Action · shared suite registry · multi-turn cases
+GitHub Action · multi-turn cases · prompt snapshotting
 
 ---
 
@@ -190,5 +163,3 @@ Python 3.11+ · Pydantic · PyYAML · OpenAI-compatible APIs · Typer · Rich
 ## License
 
 MIT
-
-Built as a real tool for people who ship LLM features — not a research demo.
