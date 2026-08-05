@@ -5,8 +5,11 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
+from .models import CaseResult, RunResult
 from .runner import load_suite, run_suite
 from .store import RunStore
 
@@ -15,6 +18,88 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+def _render_failure_block(cr: CaseResult) -> None:
+    """Print structured expected vs got for a failed case."""
+    for f in cr.failures:
+        # Support both new Failure objects and legacy string failures from old runs
+        if isinstance(f, str):
+            console.print(f"  [red]•[/red] {f}")
+            continue
+
+        console.print(f"  [red]•[/red] [{f.check}] {f.message}")
+        if f.expected is not None:
+            console.print(f"      [dim]expected[/dim]  {f.expected}")
+        if f.got is not None:
+            console.print(f"      [dim]got[/dim]       {f.got}")
+
+    if cr.output and not any(
+        (not isinstance(f, str) and f.got) for f in cr.failures
+    ):
+        preview = " ".join(cr.output.split())[:200]
+        console.print(f"      [dim]output[/dim]    {preview}{'…' if len(cr.output) > 200 else ''}")
+
+
+def _print_report(result: RunResult, *,
+                  verbose: bool = False,
+                  show_header: bool = True) -> None:
+    if show_header:
+        status = (
+            f"[bold green]{result.passed}/{result.total} passed[/bold green]"
+            if result.failed == 0
+            else f"[bold yellow]{result.passed}/{result.total} passed[/bold yellow]"
+            f"  [bold red]{result.failed} failed[/bold red]"
+        )
+        console.print()
+        console.print(f"Suite  : [bold]{result.suite_name}[/bold]")
+        console.print(f"Model  : {result.model}  (temp={result.temperature})")
+        console.print(f"Result : {status}")
+        console.print()
+
+    # Summary table
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("", width=4)
+    table.add_column("Case")
+    table.add_column("Latency", justify="right")
+    table.add_column("Issues", justify="right")
+
+    for cr in result.case_results:
+        mark = Text("PASS", style="green") if cr.passed else Text("FAIL", style="bold red")
+        latency = f"{cr.latency_ms:.0f}ms" if cr.latency_ms is not None else "—"
+        issues = "—" if cr.passed else str(len(cr.failures))
+        table.add_row(mark, cr.case_id, latency, issues)
+
+    console.print(table)
+    console.print()
+
+    # Detailed failures
+    failed_cases = [cr for cr in result.case_results if not cr.passed]
+    if failed_cases:
+        console.print("[bold]Failures[/bold]")
+        for cr in failed_cases:
+            console.print()
+            console.print(f"[red bold]FAIL[/red bold]  {cr.case_id}")
+            _render_failure_block(cr)
+            if verbose and cr.output:
+                console.print(
+                    Panel(
+                        cr.output[:2000] + ("…" if len(cr.output) > 2000 else ""),
+                        title="full output",
+                        border_style="dim",
+                        expand=False,
+                    )
+                )
+
+    if verbose:
+        passed_cases = [cr for cr in result.case_results if cr.passed]
+        if passed_cases:
+            console.print()
+            console.print("[bold]Passed (verbose)[/bold]")
+            for cr in passed_cases:
+                preview = " ".join(cr.output.split())[:120] if cr.output else "(empty)"
+                console.print(f"  [green]PASS[/green]  {cr.case_id}")
+                console.print(f"         {preview}{'…' if cr.output and len(cr.output) > 120 else ''}")
 
 
 @app.command("run")
@@ -26,6 +111,9 @@ def run_cmd(
         None, "--base-url", help="OpenAI-compatible base URL"
     ),
     no_save: bool = typer.Option(False, "--no-save", help="Do not write run history"),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show full outputs and passed-case previews"
+    ),
 ):
     """Run a golden suite and print a pass/fail report."""
     if not suite_path.exists():
@@ -42,7 +130,10 @@ def run_cmd(
         console.print("[yellow]Suite has no cases.[/yellow]")
         raise typer.Exit(1)
 
-    console.print(f"[bold]Running suite[/bold] {suite.name} ({len(suite.cases)} cases)...")
+    console.print(
+        f"[bold]Running suite[/bold] {suite.name} "
+        f"([cyan]{len(suite.cases)}[/cyan] cases)..."
+    )
 
     try:
         result = run_suite(
@@ -67,24 +158,7 @@ def run_cmd(
         path = RunStore().save(result)
         console.print(f"[dim]Saved run {result.id[:8]}… → {path}[/dim]")
 
-    # Report
-    console.print()
-    console.print(f"Suite : {result.suite_name}")
-    console.print(f"Model : {result.model}  (temp={result.temperature})")
-    console.print(f"Result: [bold]{result.passed}/{result.total} passed[/bold]")
-    console.print()
-
-    for cr in result.case_results:
-        if cr.passed:
-            console.print(f"[green]PASS[/green]  {cr.case_id}")
-        else:
-            console.print(f"[red]FAIL[/red]  {cr.case_id}")
-            for f in cr.failures:
-                console.print(f"       {f}")
-            # short preview of output
-            preview = cr.output.replace("\n", " ")[:120]
-            if preview:
-                console.print(f"       got: {preview}{'…' if len(cr.output) > 120 else ''}")
+    _print_report(result, verbose=verbose)
 
     raise typer.Exit(0 if result.failed == 0 else 1)
 
@@ -103,16 +177,17 @@ def list_runs_cmd(
     table.add_column("ID", style="dim", max_width=8)
     table.add_column("Suite")
     table.add_column("Model")
-    table.add_column("Pass")
-    table.add_column("Fail")
+    table.add_column("Pass", justify="right")
+    table.add_column("Fail", justify="right")
     table.add_column("Started")
     for r in rows:
+        fail_style = "red" if (r.get("failed") or 0) > 0 else "green"
         table.add_row(
             str(r["id"])[:8],
             str(r.get("suite_name") or ""),
             str(r.get("model") or ""),
             str(r.get("passed", 0)),
-            str(r.get("failed", 0)),
+            Text(str(r.get("failed", 0)), style=fail_style),
             str(r.get("started_at") or "")[:19],
         )
     console.print(table)
@@ -121,6 +196,7 @@ def list_runs_cmd(
 @app.command("show-run")
 def show_run_cmd(
     run_id: str = typer.Argument(..., help="Full or short run ID"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
     """Show details of a past run."""
     run = RunStore().get(run_id)
@@ -129,17 +205,7 @@ def show_run_cmd(
         raise typer.Exit(1)
 
     console.print(f"[bold]Run {run.id}[/bold]")
-    console.print(f"Suite : {run.suite_name}")
-    console.print(f"Model : {run.model}  temp={run.temperature}")
-    console.print(f"Result: {run.passed}/{run.total} passed")
-    console.print()
-
-    for cr in run.case_results:
-        mark = "[green]PASS[/green]" if cr.passed else "[red]FAIL[/red]"
-        console.print(f"{mark}  {cr.case_id}")
-        if not cr.passed:
-            for f in cr.failures:
-                console.print(f"       {f}")
+    _print_report(run, verbose=verbose, show_header=True)
 
 
 def main():
