@@ -22,7 +22,6 @@ class Case(BaseModel):
     id: str
     input: str
     expect: Expect = Field(default_factory=Expect)
-    # Optional per-case override of system prompt snippet (appended)
     system_extra: Optional[str] = None
 
 
@@ -34,11 +33,20 @@ class Suite(BaseModel):
     cases: list[Case] = Field(default_factory=list)
 
 
+class Failure(BaseModel):
+    """One failed expectation with enough context for a readable diff."""
+
+    check: str
+    message: str
+    expected: Optional[str] = None
+    got: Optional[str] = None
+
+
 class CaseResult(BaseModel):
     case_id: str
     passed: bool
     output: str
-    failures: list[str] = Field(default_factory=list)
+    failures: list[Failure] = Field(default_factory=list)
     latency_ms: Optional[float] = None
 
 
