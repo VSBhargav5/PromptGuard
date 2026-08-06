@@ -16,6 +16,11 @@ class Expect(BaseModel):
     exact: Optional[str] = None
     json_valid: bool = False
     json_keys: list[str] = Field(default_factory=list)
+    # Lexical similarity (token Jaccard) — no embeddings required
+    similar_to: Optional[str] = None
+    min_similarity: float = 0.5
+    # Soft length guard (characters)
+    max_chars: Optional[int] = None
 
 
 class Case(BaseModel):
