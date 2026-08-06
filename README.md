@@ -7,7 +7,7 @@ Something that used to work now fails — and nobody notices until a user compla
 
 PromptGuard lets you record *golden behaviors*, re-run them after every change, and see exactly what broke.
 
-**Current version: 0.1.1**
+**Current version: 0.1.2**
 
 ---
 
@@ -29,9 +29,10 @@ Teams shipping LLM features almost never have real regression tests.
 1. Define **golden cases** (input + expected behavior)
 2. Group them into a **suite** (YAML)
 3. **Run** against your current model + system prompt
-4. Score with deterministic checks: `contains`, `not_contains`, `regex`, `exact`, `json_valid`, `json_keys`
-5. Get a **readable report** with summary table, latency, and expected-vs-got diffs
-6. Store run history locally (`~/.promptguard/runs/`)
+4. Score with checks: `contains`, `not_contains`, `regex`, `exact`, `json_*`, `similar_to`, `max_chars`
+5. Readable report: summary table, latency, expected-vs-got diffs
+6. **JUnit XML** export for CI
+7. Local run history (`~/.promptguard/runs/`)
 
 ---
 
@@ -41,11 +42,11 @@ Teams shipping LLM features almost never have real regression tests.
 git clone https://github.com/VSBhargav5/PromptGuard.git
 cd PromptGuard
 pip install -r requirements.txt
-
 export OPENAI_API_KEY="sk-..."
 
 python -m promptguard run examples/support_bot_suite.yaml
-python -m promptguard run examples/support_bot_suite.yaml -v   # verbose
+python -m promptguard run examples/sql_assistant_suite.yaml -v
+python -m promptguard run examples/support_bot_suite.yaml --junit junit.xml
 ```
 
 Other providers:
@@ -56,24 +57,18 @@ python -m promptguard run examples/support_bot_suite.yaml \
   --model llama-3.3-70b-versatile
 ```
 
-### Example report
+---
 
-```text
-Suite  : support-bot
-Model  : gpt-4o-mini  (temp=0.0)
-Result : 4/5 passed  1 failed
+## Expectations
 
- PASS  greeting          420ms   —
- PASS  refund_policy     510ms   —
- FAIL  order_status_json 380ms   1
-
-Failures
-
-FAIL  order_status_json
-  • [json_key] Missing JSON key: "eta"
-      expected  key "eta" present
-      got       keys: ['status']
-```
+| Check | Purpose |
+|-------|---------|
+| `contains` / `not_contains` | Required / forbidden phrases |
+| `regex` | Pattern match |
+| `exact` | Whitespace-normalized full match |
+| `json_valid` / `json_keys` | Structured output |
+| `similar_to` + `min_similarity` | Lexical (token Jaccard) similarity — no embeddings |
+| `max_chars` | Soft length guard |
 
 ---
 
@@ -82,36 +77,27 @@ FAIL  order_status_json
 ```yaml
 name: support-bot
 system_prompt: |
-  You are a helpful support agent for Acme Shop.
-  Be concise. Never invent policies.
+  You are a helpful support agent...
 model: gpt-4o-mini
 temperature: 0
 
 cases:
-  - id: greeting
-    input: "Hi"
-    expect:
-      contains: ["help"]
-
   - id: refund_policy
     input: "What is your refund policy?"
     expect:
       contains: ["30 days", "refund"]
       not_contains: ["I don't know"]
-
-  - id: order_status_json
-    input: "Return ONLY JSON with keys status and eta for order #12345"
-    expect:
-      json_valid: true
-      json_keys: ["status", "eta"]
+      max_chars: 1000
 ```
+
+Examples: `examples/support_bot_suite.yaml`, `examples/sql_assistant_suite.yaml`.
 
 ---
 
 ## CLI
 
 ```bash
-python -m promptguard run <suite.yaml> [--model ...] [--base-url ...] [-v]
+python -m promptguard run <suite.yaml> [--model ...] [--base-url ...] [-v] [--junit path]
 python -m promptguard list-runs
 python -m promptguard show-run <run_id> [-v]
 ```
@@ -126,33 +112,18 @@ Exit code `1` if any case fails → CI-ready.
 Suite (YAML)
     │
     ▼
-┌─────────────────────┐
-│  Runner             │  one model call per case
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│  Scorer             │  structured Failure{check, expected, got}
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│  Report + History   │  table + diffs + ~/.promptguard/runs/
-└─────────────────────┘
+ Runner  →  Scorer (structured Failure)  →  Report + History + optional JUnit
 ```
 
 ---
 
 ## Roadmap
 
-**v0.1.1 (current)**  
-Structured failures · expected-vs-got diffs · summary table · latency · verbose mode
-
-**Next**  
-Second example suite · optional semantic similarity · JUnit XML
+**v0.1.2 (current)**  
+JUnit XML · `similar_to` / `max_chars` · second example suite (SQL assistant)
 
 **Later**  
-GitHub Action · multi-turn cases · prompt snapshotting
+Embedding-based similarity · GitHub Action · multi-turn cases
 
 ---
 
