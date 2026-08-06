@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .junit import write_junit
 from .models import CaseResult, RunResult
 from .runner import load_suite, run_suite
 from .store import RunStore
@@ -21,9 +22,7 @@ console = Console()
 
 
 def _render_failure_block(cr: CaseResult) -> None:
-    """Print structured expected vs got for a failed case."""
     for f in cr.failures:
-        # Support both new Failure objects and legacy string failures from old runs
         if isinstance(f, str):
             console.print(f"  [red]•[/red] {f}")
             continue
@@ -41,15 +40,20 @@ def _render_failure_block(cr: CaseResult) -> None:
         console.print(f"      [dim]output[/dim]    {preview}{'…' if len(cr.output) > 200 else ''}")
 
 
-def _print_report(result: RunResult, *,
-                  verbose: bool = False,
-                  show_header: bool = True) -> None:
+def _print_report(
+    result: RunResult,
+    *,
+    verbose: bool = False,
+    show_header: bool = True,
+) -> None:
     if show_header:
         status = (
             f"[bold green]{result.passed}/{result.total} passed[/bold green]"
             if result.failed == 0
-            else f"[bold yellow]{result.passed}/{result.total} passed[/bold yellow]"
-            f"  [bold red]{result.failed} failed[/bold red]"
+            else (
+                f"[bold yellow]{result.passed}/{result.total} passed[/bold yellow]"
+                f"  [bold red]{result.failed} failed[/bold red]"
+            )
         )
         console.print()
         console.print(f"Suite  : [bold]{result.suite_name}[/bold]")
@@ -57,7 +61,6 @@ def _print_report(result: RunResult, *,
         console.print(f"Result : {status}")
         console.print()
 
-    # Summary table
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
     table.add_column("", width=4)
     table.add_column("Case")
@@ -73,7 +76,6 @@ def _print_report(result: RunResult, *,
     console.print(table)
     console.print()
 
-    # Detailed failures
     failed_cases = [cr for cr in result.case_results if not cr.passed]
     if failed_cases:
         console.print("[bold]Failures[/bold]")
@@ -99,7 +101,9 @@ def _print_report(result: RunResult, *,
             for cr in passed_cases:
                 preview = " ".join(cr.output.split())[:120] if cr.output else "(empty)"
                 console.print(f"  [green]PASS[/green]  {cr.case_id}")
-                console.print(f"         {preview}{'…' if cr.output and len(cr.output) > 120 else ''}")
+                console.print(
+                    f"         {preview}{'…' if cr.output and len(cr.output) > 120 else ''}"
+                )
 
 
 @app.command("run")
@@ -113,6 +117,9 @@ def run_cmd(
     no_save: bool = typer.Option(False, "--no-save", help="Do not write run history"),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show full outputs and passed-case previews"
+    ),
+    junit: Optional[Path] = typer.Option(
+        None, "--junit", help="Write JUnit XML report to this path (CI)"
     ),
 ):
     """Run a golden suite and print a pass/fail report."""
@@ -157,6 +164,10 @@ def run_cmd(
     if not no_save:
         path = RunStore().save(result)
         console.print(f"[dim]Saved run {result.id[:8]}… → {path}[/dim]")
+
+    if junit:
+        out = write_junit(result, junit)
+        console.print(f"[dim]JUnit XML → {out}[/dim]")
 
     _print_report(result, verbose=verbose)
 
