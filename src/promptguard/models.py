@@ -16,18 +16,25 @@ class Expect(BaseModel):
     exact: Optional[str] = None
     json_valid: bool = False
     json_keys: list[str] = Field(default_factory=list)
-    # Lexical similarity (token Jaccard) — no embeddings required
     similar_to: Optional[str] = None
     min_similarity: float = 0.5
-    # Soft length guard (characters)
     max_chars: Optional[int] = None
+
+
+class Message(BaseModel):
+    role: str  # system | user | assistant
+    content: str
 
 
 class Case(BaseModel):
     id: str
-    input: str
+    # Single-turn: use input. Multi-turn: use messages (user/assistant turns).
+    input: Optional[str] = None
+    messages: list[Message] = Field(default_factory=list)
     expect: Expect = Field(default_factory=Expect)
     system_extra: Optional[str] = None
+    # Template variables for {{var}} substitution in input/messages
+    vars: dict[str, Any] = Field(default_factory=dict)
 
 
 class Suite(BaseModel):
@@ -35,12 +42,12 @@ class Suite(BaseModel):
     system_prompt: str = ""
     model: str = "gpt-4o-mini"
     temperature: float = 0.0
+    # Suite-level vars merged into each case (case wins on conflict)
+    vars: dict[str, Any] = Field(default_factory=dict)
     cases: list[Case] = Field(default_factory=list)
 
 
 class Failure(BaseModel):
-    """One failed expectation with enough context for a readable diff."""
-
     check: str
     message: str
     expected: Optional[str] = None
@@ -53,6 +60,7 @@ class CaseResult(BaseModel):
     output: str
     failures: list[Failure] = Field(default_factory=list)
     latency_ms: Optional[float] = None
+    rendered_input: Optional[str] = None
 
 
 class RunResult(BaseModel):
@@ -60,6 +68,8 @@ class RunResult(BaseModel):
     suite_name: str
     model: str
     temperature: float
+    # Snapshot so history is meaningful after prompt edits
+    system_prompt: str = ""
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
     passed: int = 0
