@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from .models import Expect, Failure
 
@@ -22,6 +22,20 @@ def _fail(
     got: Optional[str] = None,
 ) -> Failure:
     return Failure(check=check, message=message, expected=expected, got=got)
+
+
+def _tokens(text: str) -> Set[str]:
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def token_jaccard(a: str, b: str) -> float:
+    """Lexical similarity in [0, 1]. Empty vs empty is 1.0."""
+    ta, tb = _tokens(a), _tokens(b)
+    if not ta and not tb:
+        return 1.0
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
 
 
 def score(output: str, expect: Expect) -> List[Failure]:
@@ -75,6 +89,28 @@ def score(output: str, expect: Expect) -> List[Failure]:
                     got=_preview(got_norm, 200) or "(empty output)",
                 )
             )
+
+    if expect.similar_to is not None:
+        sim = token_jaccard(text, expect.similar_to)
+        if sim < expect.min_similarity:
+            failures.append(
+                _fail(
+                    "similar_to",
+                    f"Lexical similarity {sim:.2f} < min {expect.min_similarity:.2f}",
+                    expected=_preview(expect.similar_to, 120),
+                    got=got_preview or "(empty output)",
+                )
+            )
+
+    if expect.max_chars is not None and len(text) > expect.max_chars:
+        failures.append(
+            _fail(
+                "max_chars",
+                f"Output length {len(text)} exceeds max_chars {expect.max_chars}",
+                expected=f"<= {expect.max_chars} chars",
+                got=f"{len(text)} chars",
+            )
+        )
 
     if expect.json_valid or expect.json_keys:
         candidate = text.strip()
