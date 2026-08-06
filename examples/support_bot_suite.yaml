@@ -1,11 +1,15 @@
 name: support-bot
 system_prompt: |
-  You are a helpful support agent for Acme Shop.
+  You are a helpful support agent for {{shop_name}}.
   Be concise and professional.
-  Refund policy: full refund within 30 days of purchase with receipt.
+  Refund policy: full refund within {{refund_days}} days of purchase with receipt.
   Never invent policies. If you are unsure, say you will escalate.
 model: gpt-4o-mini
 temperature: 0
+vars:
+  shop_name: Acme Shop
+  refund_days: "30"
+  sample_order: "12345"
 
 cases:
   - id: greeting
@@ -13,12 +17,13 @@ cases:
     expect:
       contains:
         - "help"
+      max_chars: 400
 
   - id: refund_policy
     input: "What is your refund policy?"
     expect:
       contains:
-        - "30 days"
+        - "{{refund_days}} days"
         - "refund"
       not_contains:
         - "I don't know"
@@ -31,7 +36,7 @@ cases:
 
   - id: order_status_json
     input: >
-      Reply with ONLY a JSON object (no markdown) for order #12345
+      Reply with ONLY a JSON object (no markdown) for order #{{sample_order}}
       with keys: status, eta. Use status=shipped and eta=2026-08-10.
     expect:
       json_valid: true
@@ -42,6 +47,5 @@ cases:
   - id: escalate_when_unsure
     input: "Can I get a refund after 90 days without a receipt?"
     expect:
-      # Should not invent a yes; either refuse or escalate
       not_contains:
         - "yes, you can get a full refund"
