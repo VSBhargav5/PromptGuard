@@ -5,9 +5,9 @@
 You change a prompt, a model, or a temperature.  
 Something that used to work now fails — and nobody notices until a user complains.
 
-PromptGuard lets you record *golden behaviors*, re-run them after every change, and see exactly what broke.
+PromptGuard records golden behaviors, re-runs them after every change, and tells you **what regressed**.
 
-**Current version: 0.1.2**
+**Current version: 0.2.0**
 
 ---
 
@@ -17,22 +17,27 @@ Teams shipping LLM features almost never have real regression tests.
 
 - Prompt tweaks silently change tone, format, or correctness
 - Model upgrades break edge cases that used to pass
-- “Vibe checks” in the chat UI don’t scale past a handful of examples
+- “Vibe checks” don’t scale
 - There is no CI signal for “this prompt change is safe”
 
-**PromptGuard is the missing middle**: a small, focused regression suite you actually run every time you touch a prompt.
+**PromptGuard is the missing middle**: a focused regression suite you run every time you touch a prompt — with **baseline compare**, not just a one-off score.
 
 ---
 
-## What it does
+## What’s in v0.2
 
-1. Define **golden cases** (input + expected behavior)
-2. Group them into a **suite** (YAML)
-3. **Run** against your current model + system prompt
-4. Score with checks: `contains`, `not_contains`, `regex`, `exact`, `json_*`, `similar_to`, `max_chars`
-5. Readable report: summary table, latency, expected-vs-got diffs
-6. **JUnit XML** export for CI
-7. Local run history (`~/.promptguard/runs/`)
+| Capability | Why it matters |
+|------------|----------------|
+| Golden suites (YAML) | Repeatable cases |
+| Deterministic scorers | Readable failures in seconds |
+| **Prompt snapshot** on every run | History stays meaningful after edits |
+| **`--baseline last` / `last-pass`** | “What broke vs last green?” |
+| **`compare` command** | Diff any two runs |
+| **`--case` filter** | Re-run one failing case |
+| **`{{vars}}` templating** | One suite, many fixtures |
+| **Multi-turn `messages`** | Real chat flows |
+| **`init`** | Scaffold a suite in one command |
+| JUnit XML | Drop into CI |
 
 ---
 
@@ -44,31 +49,44 @@ cd PromptGuard
 pip install -r requirements.txt
 export OPENAI_API_KEY="sk-..."
 
+# Scaffold or use examples
+python -m promptguard init my-bot -o suite.yaml
 python -m promptguard run examples/support_bot_suite.yaml
-python -m promptguard run examples/sql_assistant_suite.yaml -v
-python -m promptguard run examples/support_bot_suite.yaml --junit junit.xml
-```
 
-Other providers:
+# After you edit the system prompt — see what regressed
+python -m promptguard run examples/support_bot_suite.yaml --baseline last
 
-```bash
-python -m promptguard run examples/support_bot_suite.yaml \
-  --base-url https://api.groq.com/openai/v1 \
-  --model llama-3.3-70b-versatile
+# One case only
+python -m promptguard run examples/support_bot_suite.yaml -c refund_policy -v
+
+# CI
+python -m promptguard run examples/support_bot_suite.yaml --junit junit.xml --baseline last-pass
 ```
 
 ---
 
-## Expectations
+## Baseline compare (the product moment)
 
-| Check | Purpose |
-|-------|---------|
-| `contains` / `not_contains` | Required / forbidden phrases |
-| `regex` | Pattern match |
-| `exact` | Whitespace-normalized full match |
-| `json_valid` / `json_keys` | Structured output |
-| `similar_to` + `min_similarity` | Lexical (token Jaccard) similarity — no embeddings |
-| `max_chars` | Soft length guard |
+```bash
+python -m promptguard run suite.yaml --baseline last
+# or
+python -m promptguard compare <old_run_id> <new_run_id>
+```
+
+Example output:
+
+```text
+Compare  a1b2c3d4 → e5f6g7h8
+Suite    support-bot  |  baseline 5/5  →  current 4/5
+
+Case                 Baseline  Current  Delta
+refund_policy        PASS      PASS     still_pass
+order_status_json    PASS      FAIL     regressed
+
+1 regressed: order_status_json
+```
+
+Exit code `1` if anything **regressed** (or failed, on a normal run).
 
 ---
 
@@ -77,53 +95,79 @@ python -m promptguard run examples/support_bot_suite.yaml \
 ```yaml
 name: support-bot
 system_prompt: |
-  You are a helpful support agent...
+  You are support for {{shop_name}}.
+  Refunds within {{refund_days}} days.
 model: gpt-4o-mini
 temperature: 0
+vars:
+  shop_name: Acme Shop
+  refund_days: "30"
 
 cases:
   - id: refund_policy
     input: "What is your refund policy?"
     expect:
-      contains: ["30 days", "refund"]
-      not_contains: ["I don't know"]
-      max_chars: 1000
+      contains: ["{{refund_days}} days", "refund"]
+
+  - id: multi_turn
+    messages:
+      - role: user
+        content: "Order {{order_id}} please"
+      - role: assistant
+        content: "I have order {{order_id}}."
+      - role: user
+        content: "Status?"
+    vars:
+      order_id: "A-100"
+    expect:
+      max_chars: 500
 ```
 
-Examples: `examples/support_bot_suite.yaml`, `examples/sql_assistant_suite.yaml`.
+**Checks:** `contains`, `not_contains`, `regex`, `exact`, `json_valid`, `json_keys`, `similar_to` + `min_similarity`, `max_chars`.
 
 ---
 
 ## CLI
 
 ```bash
-python -m promptguard run <suite.yaml> [--model ...] [--base-url ...] [-v] [--junit path]
-python -m promptguard list-runs
-python -m promptguard show-run <run_id> [-v]
-```
+python -m promptguard run <suite.yaml> \
+  [--model ...] [--base-url ...] [-c CASE]... \
+  [--baseline last|last-pass|<id>] [-v] [--junit path]
 
-Exit code `1` if any case fails → CI-ready.
+python -m promptguard compare <baseline_id> <current_id>
+python -m promptguard list-runs [--suite name]
+python -m promptguard show-run <id> [-v]
+python -m promptguard init [name] [-o suite.yaml]
+```
 
 ---
 
 ## Architecture
 
 ```
-Suite (YAML)
-    │
-    ▼
- Runner  →  Scorer (structured Failure)  →  Report + History + optional JUnit
+Suite YAML (+ vars / multi-turn)
+        │
+        ▼
+   Runner (filter · template · snapshot prompt)
+        │
+        ▼
+   Scorer → structured Failure{check, expected, got}
+        │
+        ├─ Report (table + diffs)
+        ├─ History (~/.promptguard/runs/)
+        ├─ compare (regressions / fixes)
+        └─ JUnit XML
 ```
 
 ---
 
 ## Roadmap
 
-**v0.1.2 (current)**  
-JUnit XML · `similar_to` / `max_chars` · second example suite (SQL assistant)
+**Done (0.2)**  
+Baseline compare · prompt snapshot · case filter · templating · multi-turn · init · JUnit
 
 **Later**  
-Embedding-based similarity · GitHub Action · multi-turn cases
+Embedding similarity · parallel runs · GitHub Action · shared suite registry
 
 ---
 
