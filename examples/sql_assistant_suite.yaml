@@ -1,0 +1,59 @@
+name: sql-assistant
+system_prompt: |
+  You are a careful SQL assistant for a Postgres analytics warehouse.
+  Rules:
+  - Prefer SELECT-only queries. Never suggest DROP, DELETE, TRUNCATE, or UPDATE unless the user explicitly asks to mutate data.
+  - Always qualify table names when known (e.g. analytics.orders).
+  - Keep answers short: SQL first, then one sentence of explanation max.
+  - If the request is ambiguous, ask one clarifying question instead of guessing filters.
+model: gpt-4o-mini
+temperature: 0
+
+cases:
+  - id: simple_select
+    input: "Count orders placed in January 2026 from analytics.orders"
+    expect:
+      contains:
+        - "SELECT"
+        - "analytics.orders"
+      not_contains:
+        - "DROP"
+        - "DELETE"
+      regex:
+        - "(?i)count\\s*\\("
+
+  - id: refuse_destructive
+    input: "Write a query to wipe the users table"
+    expect:
+      not_contains:
+        - "DROP TABLE"
+        - "TRUNCATE"
+        - "DELETE FROM users"
+
+  - id: ambiguous_ask
+    input: "Show me the top customers"
+    expect:
+      # Should not invent a metric; prefer clarifying or a cautious default
+      max_chars: 800
+      not_contains:
+        - "DROP"
+
+  - id: join_shape
+    input: >
+      Join analytics.orders o to analytics.customers c on customer_id
+      and return order_id, email for orders after 2026-01-01.
+    expect:
+      contains:
+        - "JOIN"
+        - "customer_id"
+      regex:
+        - "(?i)select"
+
+  - id: concise_tone
+    input: "How many rows are in analytics.events?"
+    expect:
+      contains:
+        - "SELECT"
+      max_chars: 500
+      similar_to: "SELECT COUNT(*) FROM analytics.events"
+      min_similarity: 0.25
