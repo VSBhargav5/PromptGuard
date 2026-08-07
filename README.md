@@ -2,42 +2,29 @@
 
 **Regression testing for LLM applications.**
 
-You change a prompt, a model, or a temperature.  
-Something that used to work now fails — and nobody notices until a user complains.
+Change a prompt or model → re-run the suite → see **what regressed** before users do.
 
-PromptGuard records golden behaviors, re-runs them after every change, and tells you **what regressed**.
-
-**Current version: 0.2.0**
+**Current version: 0.3.0**
 
 ---
 
-## The Real Pain
+## Why
 
-Teams shipping LLM features almost never have real regression tests.
-
-- Prompt tweaks silently change tone, format, or correctness
-- Model upgrades break edge cases that used to pass
-- “Vibe checks” don’t scale
-- There is no CI signal for “this prompt change is safe”
-
-**PromptGuard is the missing middle**: a focused regression suite you run every time you touch a prompt — with **baseline compare**, not just a one-off score.
+LLM features almost never have real regression tests. Prompt tweaks and model upgrades silently break behavior. PromptGuard is a focused suite you run on every change — with baseline compare, parallel execution, and CI artifacts.
 
 ---
 
-## What’s in v0.2
+## Features
 
-| Capability | Why it matters |
-|------------|----------------|
-| Golden suites (YAML) | Repeatable cases |
-| Deterministic scorers | Readable failures in seconds |
-| **Prompt snapshot** on every run | History stays meaningful after edits |
-| **`--baseline last` / `last-pass`** | “What broke vs last green?” |
-| **`compare` command** | Diff any two runs |
-| **`--case` filter** | Re-run one failing case |
-| **`{{vars}}` templating** | One suite, many fixtures |
-| **Multi-turn `messages`** | Real chat flows |
-| **`init`** | Scaffold a suite in one command |
-| JUnit XML | Drop into CI |
+| Area | Capability |
+|------|------------|
+| Suites | YAML golden cases, `{{vars}}`, multi-turn `messages` |
+| Scoring | contains / not_contains / regex / exact / json / similar_to / max_chars |
+| Runs | **parallel workers**, **retries**, **fail-fast**, case filter |
+| History | Prompt snapshot, local run store |
+| Compare | `--baseline last\|last-pass`, `compare` cmd, prompt/model change flags |
+| CI | JUnit XML, Markdown report, **GitHub Action** example |
+| DX | `init`, `system_prompt_file`, OpenAI-compatible `--base-url` |
 
 ---
 
@@ -49,81 +36,19 @@ cd PromptGuard
 pip install -r requirements.txt
 export OPENAI_API_KEY="sk-..."
 
-# Scaffold or use examples
-python -m promptguard init my-bot -o suite.yaml
-python -m promptguard run examples/support_bot_suite.yaml
-
-# After you edit the system prompt — see what regressed
+python -m promptguard run examples/support_bot_suite.yaml --workers 4
 python -m promptguard run examples/support_bot_suite.yaml --baseline last
-
-# One case only
-python -m promptguard run examples/support_bot_suite.yaml -c refund_policy -v
-
-# CI
-python -m promptguard run examples/support_bot_suite.yaml --junit junit.xml --baseline last-pass
+python -m promptguard run examples/sql_assistant_suite.yaml -c refuse_destructive -v
 ```
 
----
-
-## Baseline compare (the product moment)
+CI-style:
 
 ```bash
-python -m promptguard run suite.yaml --baseline last
-# or
-python -m promptguard compare <old_run_id> <new_run_id>
+python -m promptguard run examples/support_bot_suite.yaml \
+  --workers 4 --retries 1 \
+  --junit junit.xml --report report.md \
+  --baseline last-pass
 ```
-
-Example output:
-
-```text
-Compare  a1b2c3d4 → e5f6g7h8
-Suite    support-bot  |  baseline 5/5  →  current 4/5
-
-Case                 Baseline  Current  Delta
-refund_policy        PASS      PASS     still_pass
-order_status_json    PASS      FAIL     regressed
-
-1 regressed: order_status_json
-```
-
-Exit code `1` if anything **regressed** (or failed, on a normal run).
-
----
-
-## Suite format
-
-```yaml
-name: support-bot
-system_prompt: |
-  You are support for {{shop_name}}.
-  Refunds within {{refund_days}} days.
-model: gpt-4o-mini
-temperature: 0
-vars:
-  shop_name: Acme Shop
-  refund_days: "30"
-
-cases:
-  - id: refund_policy
-    input: "What is your refund policy?"
-    expect:
-      contains: ["{{refund_days}} days", "refund"]
-
-  - id: multi_turn
-    messages:
-      - role: user
-        content: "Order {{order_id}} please"
-      - role: assistant
-        content: "I have order {{order_id}}."
-      - role: user
-        content: "Status?"
-    vars:
-      order_id: "A-100"
-    expect:
-      max_chars: 500
-```
-
-**Checks:** `contains`, `not_contains`, `regex`, `exact`, `json_valid`, `json_keys`, `similar_to` + `min_similarity`, `max_chars`.
 
 ---
 
@@ -131,8 +56,10 @@ cases:
 
 ```bash
 python -m promptguard run <suite.yaml> \
-  [--model ...] [--base-url ...] [-c CASE]... \
-  [--baseline last|last-pass|<id>] [-v] [--junit path]
+  [-c CASE]... [-w WORKERS] [--retries N] [--fail-fast] \
+  [--baseline last|last-pass|<id>] \
+  [--junit path] [--report path] [-v] \
+  [--model ...] [--base-url ...]
 
 python -m promptguard compare <baseline_id> <current_id>
 python -m promptguard list-runs [--suite name]
@@ -140,38 +67,66 @@ python -m promptguard show-run <id> [-v]
 python -m promptguard init [name] [-o suite.yaml]
 ```
 
+Exit code `1` on failures or regressions.
+
+---
+
+## Suite tips (v0.3)
+
+```yaml
+name: my-bot
+system_prompt_file: prompts/system.txt   # optional; merged with system_prompt
+system_prompt: |
+  Short overrides here.
+model: gpt-4o-mini
+temperature: 0
+vars:
+  shop: Acme
+cases:
+  - id: refund
+    input: "Refund policy for {{shop}}?"
+    expect:
+      contains: ["refund"]
+```
+
+---
+
+## GitHub Actions
+
+See [`.github/workflows/promptguard.yml`](.github/workflows/promptguard.yml).
+
+Set repository secret `OPENAI_API_KEY` (and optionally point at another OpenAI-compatible API).
+
 ---
 
 ## Architecture
 
 ```
-Suite YAML (+ vars / multi-turn)
+Suite YAML (+ prompt file / vars / multi-turn)
         │
         ▼
-   Runner (filter · template · snapshot prompt)
+ Runner (filter · template · parallel · retries · fail-fast · snapshot)
         │
         ▼
-   Scorer → structured Failure{check, expected, got}
+ Scorer → Failure{check, expected, got}
         │
-        ├─ Report (table + diffs)
+        ├─ Terminal report
         ├─ History (~/.promptguard/runs/)
-        ├─ compare (regressions / fixes)
-        └─ JUnit XML
+        ├─ compare (regressions + prompt/model flags)
+        ├─ JUnit + Markdown
+        └─ GitHub Action
 ```
 
 ---
 
 ## Roadmap
 
-**Done (0.2)**  
-Baseline compare · prompt snapshot · case filter · templating · multi-turn · init · JUnit
-
-**Later**  
-Embedding similarity · parallel runs · GitHub Action · shared suite registry
+**0.3 (current)** — parallel · retries · fail-fast · markdown · GHA · prompt file  
+**Later** — embedding similarity · multi-suite workspaces · shared registry
 
 ---
 
-## Tech Stack
+## Tech
 
 Python 3.11+ · Pydantic · PyYAML · OpenAI-compatible APIs · Typer · Rich
 
