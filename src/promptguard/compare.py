@@ -32,6 +32,8 @@ class CompareResult:
     baseline: RunResult
     current: RunResult
     deltas: list[CaseDelta] = field(default_factory=list)
+    prompt_changed: bool = False
+    model_changed: bool = False
 
     @property
     def regressed(self) -> list[CaseDelta]:
@@ -67,4 +69,11 @@ def compare_runs(baseline: RunResult, current: RunResult) -> CompareResult:
             )
         )
 
-    return CompareResult(baseline=baseline, current=current, deltas=deltas)
+    return CompareResult(
+        baseline=baseline,
+        current=current,
+        deltas=deltas,
+        prompt_changed=(baseline.system_prompt or "") != (current.system_prompt or ""),
+        model_changed=baseline.model != current.model
+        or baseline.temperature != current.temperature,
+    )
