@@ -12,6 +12,7 @@ from rich.text import Text
 from .compare import compare_runs
 from .junit import write_junit
 from .models import CaseResult, RunResult
+from .report import write_markdown
 from .runner import load_suite, run_suite
 from .store import RunStore
 
@@ -61,6 +62,9 @@ def _print_report(
         console.print()
         console.print(f"Suite  : [bold]{result.suite_name}[/bold]")
         console.print(f"Model  : {result.model}  (temp={result.temperature})")
+        workers = (result.meta or {}).get("workers")
+        if workers and workers > 1:
+            console.print(f"Workers: {workers}")
         if result.system_prompt:
             snap = result.system_prompt.replace("\n", " ")[:80]
             console.print(
@@ -126,6 +130,14 @@ def _print_compare(cmp) -> None:
         f"baseline {cmp.baseline.passed}/{cmp.baseline.total}  →  "
         f"current {cmp.current.passed}/{cmp.current.total}"
     )
+    if cmp.prompt_changed:
+        console.print("[yellow]System prompt changed between runs[/yellow]")
+    if cmp.model_changed:
+        console.print(
+            f"[yellow]Model/temp changed:[/yellow] "
+            f"{cmp.baseline.model}@{cmp.baseline.temperature} → "
+            f"{cmp.current.model}@{cmp.current.temperature}"
+        )
     console.print()
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
@@ -181,6 +193,15 @@ def run_cmd(
     case: Optional[List[str]] = typer.Option(
         None, "--case", "-c", help="Run only these case ids (repeatable)"
     ),
+    workers: int = typer.Option(
+        1, "--workers", "-w", help="Parallel case workers (fail-fast forces 1)"
+    ),
+    retries: int = typer.Option(
+        0, "--retries", help="Retry model calls on transport/API errors"
+    ),
+    fail_fast: bool = typer.Option(
+        False, "--fail-fast", help="Stop after first failing case (sequential)"
+    ),
     baseline: Optional[str] = typer.Option(
         None,
         "--baseline",
@@ -192,6 +213,9 @@ def run_cmd(
     ),
     junit: Optional[Path] = typer.Option(
         None, "--junit", help="Write JUnit XML report to this path (CI)"
+    ),
+    report: Optional[Path] = typer.Option(
+        None, "--report", help="Write Markdown report to this path"
     ),
 ):
     """Run a golden suite and print a pass/fail report."""
@@ -211,9 +235,10 @@ def run_cmd(
 
     case_ids = case or None
     n = len(case_ids) if case_ids else len(suite.cases)
+    mode = "fail-fast" if fail_fast else (f"{workers} workers" if workers > 1 else "sequential")
     console.print(
         f"[bold]Running suite[/bold] {suite.name} "
-        f"([cyan]{n}[/cyan] case{'s' if n != 1 else ''})..."
+        f"([cyan]{n}[/cyan] case{'s' if n != 1 else ''}, {mode})..."
     )
 
     try:
@@ -223,6 +248,9 @@ def run_cmd(
             temperature=temperature,
             base_url=base_url,
             case_ids=case_ids,
+            workers=1 if fail_fast else workers,
+            retries=retries,
+            fail_fast=fail_fast,
         )
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
@@ -248,15 +276,16 @@ def run_cmd(
         out = write_junit(result, junit)
         console.print(f"[dim]JUnit XML → {out}[/dim]")
 
+    if report:
+        out = write_markdown(result, report)
+        console.print(f"[dim]Markdown report → {out}[/dim]")
+
     _print_report(result, verbose=verbose)
 
-    # Optional baseline compare
     if baseline:
         base_run = None
         if baseline in ("last", "latest"):
-            base_run = store.latest_for_suite(
-                suite.name, exclude_id=result.id
-            )
+            base_run = store.latest_for_suite(suite.name, exclude_id=result.id)
         elif baseline in ("last-pass", "last-passing", "green"):
             base_run = store.latest_for_suite(
                 suite.name, only_passing=True, exclude_id=result.id
@@ -357,6 +386,8 @@ def init_cmd(
         raise typer.Exit(1)
 
     content = f"""name: {name}
+# Optional: load prompt from file instead of (or in addition to) inline text
+# system_prompt_file: prompts/{name}.txt
 system_prompt: |
   You are a helpful assistant. Be concise and accurate.
   Never invent policies or facts you were not given.
