@@ -22,11 +22,30 @@ jobs:
           pip install -r requirements.txt
           pip install -e .
 
-      - name: Run support-bot suite
+      # Live LLM calls need a secret. Without it we still validate install/import.
+      - name: Check API key
+        id: key
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Optional OpenAI-compatible endpoint:
-          # OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::OPENAI_API_KEY secret is not set. Skipping live suite run."
+            echo "Add repo secret OPENAI_API_KEY to enable regression on CI."
+          else
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Smoke import
+        if: steps.key.outputs.has_key == 'false'
+        run: |
+          python -c "import promptguard; print('promptguard', promptguard.__version__)"
+          python -m promptguard --help
+
+      - name: Run support-bot suite
+        if: steps.key.outputs.has_key == 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python -m promptguard run examples/support_bot_suite.yaml \
             --workers 4 \
@@ -35,7 +54,7 @@ jobs:
             --report report-support.md
 
       - name: Upload artifacts
-        if: always()
+        if: always() && steps.key.outputs.has_key == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: promptguard-reports
