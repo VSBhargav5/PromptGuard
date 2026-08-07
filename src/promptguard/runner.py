@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence
@@ -14,8 +15,24 @@ from .template import render
 
 
 def load_suite(path: Path) -> Suite:
+    path = Path(path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return Suite.model_validate(raw)
+    suite = Suite.model_validate(raw)
+
+    # Resolve system_prompt_file relative to the suite file
+    if suite.system_prompt_file:
+        prompt_path = Path(suite.system_prompt_file)
+        if not prompt_path.is_absolute():
+            prompt_path = path.parent / prompt_path
+        if not prompt_path.exists():
+            raise FileNotFoundError(f"system_prompt_file not found: {prompt_path}")
+        file_text = prompt_path.read_text(encoding="utf-8").strip()
+        if suite.system_prompt:
+            suite.system_prompt = (suite.system_prompt.rstrip() + "\n\n" + file_text).strip()
+        else:
+            suite.system_prompt = file_text
+
+    return suite
 
 
 def filter_cases(suite: Suite, case_ids: Optional[Sequence[str]] = None) -> list[Case]:
@@ -30,7 +47,6 @@ def filter_cases(suite: Suite, case_ids: Optional[Sequence[str]] = None) -> list
 
 
 def _build_messages(suite: Suite, case: Case) -> tuple[list[dict], str]:
-    """Return (chat messages, rendered user input preview)."""
     vars_map = {**(suite.vars or {}), **(case.vars or {})}
 
     system = suite.system_prompt or ""
@@ -58,6 +74,75 @@ def _build_messages(suite: Suite, case: Case) -> tuple[list[dict], str]:
     return messages, rendered_preview
 
 
+def _run_one_case(
+    client: OpenAI,
+    suite: Suite,
+    case: Case,
+    *,
+    model: str,
+    temperature: float,
+    retries: int = 0,
+) -> CaseResult:
+    messages, rendered_input = _build_messages(suite, case)
+    attempts = max(0, retries) + 1
+    last_error: Optional[Exception] = None
+    output = ""
+    t0 = time.perf_counter()
+
+    for attempt in range(attempts):
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+            )
+            output = (resp.choices[0].message.content or "").strip()
+            last_error = None
+            break
+        except Exception as e:
+            last_error = e
+            if attempt + 1 < attempts:
+                time.sleep(0.4 * (attempt + 1))
+
+    latency = (time.perf_counter() - t0) * 1000
+
+    if last_error is not None:
+        return CaseResult(
+            case_id=case.id,
+            passed=False,
+            output="",
+            failures=[
+                Failure(
+                    check="model_call",
+                    message=f"Model call failed after {attempts} attempt(s): {last_error}",
+                    expected="successful model response",
+                    got=str(last_error),
+                )
+            ],
+            latency_ms=round(latency, 1),
+            rendered_input=rendered_input,
+        )
+
+    expect = case.expect.model_copy(deep=True)
+    vars_map = {**(suite.vars or {}), **(case.vars or {})}
+    if expect.similar_to:
+        expect.similar_to = render(expect.similar_to, vars_map)
+    if expect.exact:
+        expect.exact = render(expect.exact, vars_map)
+    expect.contains = [render(x, vars_map) for x in expect.contains]
+    expect.not_contains = [render(x, vars_map) for x in expect.not_contains]
+
+    failures = score(output, expect)
+    return CaseResult(
+        case_id=case.id,
+        passed=len(failures) == 0,
+        output=output,
+        failures=failures,
+        latency_ms=round(latency, 1),
+        rendered_input=rendered_input,
+    )
+
+
 def run_suite(
     suite: Suite,
     *,
@@ -66,8 +151,11 @@ def run_suite(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     case_ids: Optional[Sequence[str]] = None,
+    workers: int = 1,
+    retries: int = 0,
+    fail_fast: bool = False,
 ) -> RunResult:
-    """Execute cases and return a full RunResult with prompt snapshot."""
+    """Execute cases (optionally in parallel) and return a RunResult."""
     client_kwargs = {}
     if api_key:
         client_kwargs["api_key"] = api_key
@@ -78,6 +166,7 @@ def run_suite(
     use_model = model or suite.model
     use_temp = suite.temperature if temperature is None else temperature
     cases = filter_cases(suite, case_ids)
+    workers = max(1, workers)
 
     result = RunResult(
         suite_name=suite.name,
@@ -85,68 +174,54 @@ def run_suite(
         temperature=use_temp,
         system_prompt=suite.system_prompt or "",
         total=len(cases),
-        meta={"case_filter": list(case_ids) if case_ids else None},
+        meta={
+            "case_filter": list(case_ids) if case_ids else None,
+            "workers": workers,
+            "retries": retries,
+            "fail_fast": fail_fast,
+        },
     )
 
-    for case in cases:
-        messages, rendered_input = _build_messages(suite, case)
+    case_results: list[CaseResult] = []
 
-        t0 = time.perf_counter()
-        try:
-            resp = client.chat.completions.create(
+    if workers == 1 or fail_fast:
+        # Sequential (required for true fail-fast)
+        for case in cases:
+            cr = _run_one_case(
+                client,
+                suite,
+                case,
                 model=use_model,
-                messages=messages,
                 temperature=use_temp,
+                retries=retries,
             )
-            output = (resp.choices[0].message.content or "").strip()
-        except Exception as e:
-            latency = (time.perf_counter() - t0) * 1000
-            case_result = CaseResult(
-                case_id=case.id,
-                passed=False,
-                output="",
-                failures=[
-                    Failure(
-                        check="model_call",
-                        message=f"Model call failed: {e}",
-                        expected="successful model response",
-                        got=str(e),
-                    )
-                ],
-                latency_ms=round(latency, 1),
-                rendered_input=rendered_input,
-            )
-            result.case_results.append(case_result)
-            result.failed += 1
-            continue
+            case_results.append(cr)
+            if fail_fast and not cr.passed:
+                break
+    else:
+        # Parallel — preserve suite order in final list
+        by_id: dict[str, CaseResult] = {}
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(
+                    _run_one_case,
+                    client,
+                    suite,
+                    case,
+                    model=use_model,
+                    temperature=use_temp,
+                    retries=retries,
+                ): case.id
+                for case in cases
+            }
+            for fut in as_completed(futures):
+                cr = fut.result()
+                by_id[cr.case_id] = cr
+        case_results = [by_id[c.id] for c in cases if c.id in by_id]
 
-        latency = (time.perf_counter() - t0) * 1000
-        # Also template expect.similar_to / exact if they use vars
-        expect = case.expect.model_copy(deep=True)
-        vars_map = {**(suite.vars or {}), **(case.vars or {})}
-        if expect.similar_to:
-            expect.similar_to = render(expect.similar_to, vars_map)
-        if expect.exact:
-            expect.exact = render(expect.exact, vars_map)
-        expect.contains = [render(x, vars_map) for x in expect.contains]
-        expect.not_contains = [render(x, vars_map) for x in expect.not_contains]
-
-        failures = score(output, expect)
-        passed = len(failures) == 0
-
-        case_result = CaseResult(
-            case_id=case.id,
-            passed=passed,
-            output=output,
-            failures=failures,
-            latency_ms=round(latency, 1),
-            rendered_input=rendered_input,
-        )
-        result.case_results.append(case_result)
-        if passed:
-            result.passed += 1
-        else:
-            result.failed += 1
-
+    result.case_results = case_results
+    result.passed = sum(1 for c in case_results if c.passed)
+    result.failed = sum(1 for c in case_results if not c.passed)
+    result.total = len(case_results)
     result.finished_at = datetime.utcnow()
     return result
