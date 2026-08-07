@@ -28,21 +28,20 @@ class Message(BaseModel):
 
 class Case(BaseModel):
     id: str
-    # Single-turn: use input. Multi-turn: use messages (user/assistant turns).
     input: Optional[str] = None
     messages: list[Message] = Field(default_factory=list)
     expect: Expect = Field(default_factory=Expect)
     system_extra: Optional[str] = None
-    # Template variables for {{var}} substitution in input/messages
     vars: dict[str, Any] = Field(default_factory=dict)
 
 
 class Suite(BaseModel):
     name: str
     system_prompt: str = ""
+    # Optional path relative to suite file or absolute — loaded at runtime
+    system_prompt_file: Optional[str] = None
     model: str = "gpt-4o-mini"
     temperature: float = 0.0
-    # Suite-level vars merged into each case (case wins on conflict)
     vars: dict[str, Any] = Field(default_factory=dict)
     cases: list[Case] = Field(default_factory=list)
 
@@ -68,7 +67,6 @@ class RunResult(BaseModel):
     suite_name: str
     model: str
     temperature: float
-    # Snapshot so history is meaningful after prompt edits
     system_prompt: str = ""
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
