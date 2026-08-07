@@ -1,0 +1,44 @@
+name: PromptGuard
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Run support-bot suite
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Optional OpenAI-compatible endpoint:
+          # OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+        run: |
+          python -m promptguard run examples/support_bot_suite.yaml \
+            --workers 4 \
+            --retries 1 \
+            --junit junit-support.xml \
+            --report report-support.md
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptguard-reports
+          path: |
+            junit-*.xml
+            report-*.md
