@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence
@@ -19,7 +19,6 @@ def load_suite(path: Path) -> Suite:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     suite = Suite.model_validate(raw)
 
-    # Resolve system_prompt_file relative to the suite file
     if suite.system_prompt_file:
         prompt_path = Path(suite.system_prompt_file)
         if not prompt_path.is_absolute():
@@ -74,6 +73,21 @@ def _build_messages(suite: Suite, case: Case) -> tuple[list[dict], str]:
     return messages, rendered_preview
 
 
+def _call_model(
+    client: OpenAI,
+    *,
+    model: str,
+    messages: list[dict],
+    temperature: float,
+) -> str:
+    resp = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
 def _run_one_case(
     client: OpenAI,
     suite: Suite,
@@ -82,6 +96,7 @@ def _run_one_case(
     model: str,
     temperature: float,
     retries: int = 0,
+    timeout: Optional[float] = None,
 ) -> CaseResult:
     messages, rendered_input = _build_messages(suite, case)
     attempts = max(0, retries) + 1
@@ -91,13 +106,27 @@ def _run_one_case(
 
     for attempt in range(attempts):
         try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-            )
-            output = (resp.choices[0].message.content or "").strip()
+            if timeout and timeout > 0:
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    fut = pool.submit(
+                        _call_model,
+                        client,
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                    )
+                    output = fut.result(timeout=timeout)
+            else:
+                output = _call_model(
+                    client,
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                )
             last_error = None
+            break
+        except FuturesTimeout as e:
+            last_error = TimeoutError(f"case timed out after {timeout}s")
             break
         except Exception as e:
             last_error = e
@@ -107,13 +136,14 @@ def _run_one_case(
     latency = (time.perf_counter() - t0) * 1000
 
     if last_error is not None:
+        check = "timeout" if isinstance(last_error, TimeoutError) else "model_call"
         return CaseResult(
             case_id=case.id,
             passed=False,
             output="",
             failures=[
                 Failure(
-                    check="model_call",
+                    check=check,
                     message=f"Model call failed after {attempts} attempt(s): {last_error}",
                     expected="successful model response",
                     got=str(last_error),
@@ -154,6 +184,7 @@ def run_suite(
     workers: int = 1,
     retries: int = 0,
     fail_fast: bool = False,
+    timeout: Optional[float] = None,
 ) -> RunResult:
     """Execute cases (optionally in parallel) and return a RunResult."""
     client_kwargs = {}
@@ -179,13 +210,13 @@ def run_suite(
             "workers": workers,
             "retries": retries,
             "fail_fast": fail_fast,
+            "timeout": timeout,
         },
     )
 
     case_results: list[CaseResult] = []
 
     if workers == 1 or fail_fast:
-        # Sequential (required for true fail-fast)
         for case in cases:
             cr = _run_one_case(
                 client,
@@ -194,12 +225,12 @@ def run_suite(
                 model=use_model,
                 temperature=use_temp,
                 retries=retries,
+                timeout=timeout,
             )
             case_results.append(cr)
             if fail_fast and not cr.passed:
                 break
     else:
-        # Parallel — preserve suite order in final list
         by_id: dict[str, CaseResult] = {}
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
@@ -211,6 +242,7 @@ def run_suite(
                     model=use_model,
                     temperature=use_temp,
                     retries=retries,
+                    timeout=timeout,
                 ): case.id
                 for case in cases
             }
