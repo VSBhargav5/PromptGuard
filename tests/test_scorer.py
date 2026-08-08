@@ -18,8 +18,8 @@ def test_not_contains():
 
 
 def test_regex():
-    assert score("order #42", Expect(regex=[r"#\\d+"])) == []
-    assert score("no number", Expect(regex=[r"#\\d+"]))
+    assert score("order #42", Expect(regex=[r"#\d+"])) == []
+    assert score("no number", Expect(regex=[r"#\d+"]))
 
 
 def test_exact_normalized():
