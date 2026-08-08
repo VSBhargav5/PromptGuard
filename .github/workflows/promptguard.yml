@@ -20,9 +20,11 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -r requirements.txt
-          pip install -e .
+          pip install -e ".[dev]"
 
-      # Live LLM calls need a secret. Without it we still validate install/import.
+      - name: Unit tests (offline)
+        run: pytest -q
+
       - name: Check API key
         id: key
         env:
@@ -31,16 +33,9 @@ jobs:
           if [ -z "$OPENAI_API_KEY" ]; then
             echo "has_key=false" >> "$GITHUB_OUTPUT"
             echo "::notice::OPENAI_API_KEY secret is not set. Skipping live suite run."
-            echo "Add repo secret OPENAI_API_KEY to enable regression on CI."
           else
             echo "has_key=true" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Smoke import
-        if: steps.key.outputs.has_key == 'false'
-        run: |
-          python -c "import promptguard; print('promptguard', promptguard.__version__)"
-          python -m promptguard --help
 
       - name: Run support-bot suite
         if: steps.key.outputs.has_key == 'true'
@@ -50,6 +45,7 @@ jobs:
           python -m promptguard run examples/support_bot_suite.yaml \
             --workers 4 \
             --retries 1 \
+            --timeout 60 \
             --junit junit-support.xml \
             --report report-support.md
 
