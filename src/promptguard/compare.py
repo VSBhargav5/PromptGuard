@@ -11,6 +11,7 @@ class CaseDelta:
     case_id: str
     baseline_passed: Optional[bool]
     current_passed: Optional[bool]
+    output_changed: bool = False
 
     @property
     def kind(self) -> str:
@@ -51,6 +52,10 @@ class CompareResult:
     def new_cases(self) -> list[CaseDelta]:
         return [d for d in self.deltas if d.kind == "new"]
 
+    @property
+    def output_changed_cases(self) -> list[CaseDelta]:
+        return [d for d in self.deltas if d.output_changed]
+
 
 def compare_runs(baseline: RunResult, current: RunResult) -> CompareResult:
     base_map = {c.case_id: c for c in baseline.case_results}
@@ -61,11 +66,15 @@ def compare_runs(baseline: RunResult, current: RunResult) -> CompareResult:
     for cid in ids:
         b: Optional[CaseResult] = base_map.get(cid)
         c: Optional[CaseResult] = cur_map.get(cid)
+        out_changed = False
+        if b is not None and c is not None:
+            out_changed = (b.output or "") != (c.output or "")
         deltas.append(
             CaseDelta(
                 case_id=cid,
                 baseline_passed=None if b is None else b.passed,
                 current_passed=None if c is None else c.passed,
+                output_changed=out_changed,
             )
         )
 
