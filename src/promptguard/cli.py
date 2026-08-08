@@ -145,6 +145,7 @@ def _print_compare(cmp) -> None:
     table.add_column("Baseline")
     table.add_column("Current")
     table.add_column("Delta")
+    table.add_column("Output")
 
     style_for = {
         "regressed": "bold red",
@@ -158,11 +159,13 @@ def _print_compare(cmp) -> None:
     for d in cmp.deltas:
         b = "—" if d.baseline_passed is None else ("PASS" if d.baseline_passed else "FAIL")
         c = "—" if d.current_passed is None else ("PASS" if d.current_passed else "FAIL")
+        out = "changed" if d.output_changed else "same"
         table.add_row(
             d.case_id,
             b,
             c,
             Text(d.kind, style=style_for.get(d.kind, "")),
+            Text(out, style="yellow" if d.output_changed else "dim"),
         )
 
     console.print(table)
@@ -177,6 +180,12 @@ def _print_compare(cmp) -> None:
         console.print(
             f"[bold green]{len(cmp.fixed)} fixed[/bold green]: "
             + ", ".join(d.case_id for d in cmp.fixed)
+        )
+    changed = [d for d in cmp.output_changed_cases if d.kind in ("still_pass", "still_fail")]
+    if changed:
+        console.print(
+            f"[yellow]{len(changed)} output text changed[/yellow] (same pass/fail): "
+            + ", ".join(d.case_id for d in changed)
         )
     if not cmp.regressed and not cmp.fixed:
         console.print("[dim]No pass/fail changes between runs.[/dim]")
@@ -193,11 +202,19 @@ def run_cmd(
     case: Optional[List[str]] = typer.Option(
         None, "--case", "-c", help="Run only these case ids (repeatable)"
     ),
+    from_failed: Optional[str] = typer.Option(
+        None,
+        "--from-failed",
+        help="Re-run only failed cases from run id, or 'last' for this suite",
+    ),
     workers: int = typer.Option(
         1, "--workers", "-w", help="Parallel case workers (fail-fast forces 1)"
     ),
     retries: int = typer.Option(
         0, "--retries", help="Retry model calls on transport/API errors"
+    ),
+    timeout: Optional[float] = typer.Option(
+        None, "--timeout", help="Per-case model call timeout in seconds"
     ),
     fail_fast: bool = typer.Option(
         False, "--fail-fast", help="Stop after first failing case (sequential)"
@@ -233,7 +250,27 @@ def run_cmd(
         console.print("[yellow]Suite has no cases.[/yellow]")
         raise typer.Exit(1)
 
-    case_ids = case or None
+    store = RunStore()
+    case_ids = list(case) if case else None
+
+    if from_failed:
+        src = None
+        if from_failed in ("last", "latest"):
+            src = store.latest_for_suite(suite.name)
+        else:
+            src = store.get(from_failed)
+        if not src:
+            console.print(f"[red]No run found for --from-failed {from_failed}[/red]")
+            raise typer.Exit(1)
+        failed_ids = [c.case_id for c in src.case_results if not c.passed]
+        if not failed_ids:
+            console.print("[green]No failed cases in that run — nothing to re-run.[/green]")
+            raise typer.Exit(0)
+        case_ids = failed_ids if case_ids is None else sorted(set(case_ids) & set(failed_ids))
+        console.print(
+            f"[dim]Re-running {len(case_ids)} failed case(s) from {src.id[:8]}…[/dim]"
+        )
+
     n = len(case_ids) if case_ids else len(suite.cases)
     mode = "fail-fast" if fail_fast else (f"{workers} workers" if workers > 1 else "sequential")
     console.print(
@@ -251,6 +288,7 @@ def run_cmd(
             workers=1 if fail_fast else workers,
             retries=retries,
             fail_fast=fail_fast,
+            timeout=timeout,
         )
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
@@ -267,7 +305,6 @@ def run_cmd(
             console.print(f"[red]Run failed:[/red] {e}")
         raise typer.Exit(1) from e
 
-    store = RunStore()
     if not no_save:
         path = store.save(result)
         console.print(f"[dim]Saved run {result.id[:8]}… → {path}[/dim]")
@@ -311,7 +348,7 @@ def compare_cmd(
     baseline_id: str = typer.Argument(..., help="Baseline run id (or prefix)"),
     current_id: str = typer.Argument(..., help="Current run id (or prefix)"),
 ):
-    """Diff two saved runs: regressions, fixes, unchanged."""
+    """Diff two saved runs: regressions, fixes, output changes."""
     store = RunStore()
     baseline = store.get(baseline_id)
     current = store.get(current_id)
@@ -386,7 +423,6 @@ def init_cmd(
         raise typer.Exit(1)
 
     content = f"""name: {name}
-# Optional: load prompt from file instead of (or in addition to) inline text
 # system_prompt_file: prompts/{name}.txt
 system_prompt: |
   You are a helpful assistant. Be concise and accurate.
