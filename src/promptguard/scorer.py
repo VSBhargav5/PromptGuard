@@ -102,6 +102,16 @@ def score(output: str, expect: Expect) -> List[Failure]:
                 )
             )
 
+    if expect.min_chars is not None and len(text) < expect.min_chars:
+        failures.append(
+            _fail(
+                "min_chars",
+                f"Output length {len(text)} below min_chars {expect.min_chars}",
+                expected=f">= {expect.min_chars} chars",
+                got=f"{len(text)} chars",
+            )
+        )
+
     if expect.max_chars is not None and len(text) > expect.max_chars:
         failures.append(
             _fail(
