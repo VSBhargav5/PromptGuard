@@ -19,6 +19,7 @@ class Expect(BaseModel):
     similar_to: Optional[str] = None
     min_similarity: float = 0.5
     max_chars: Optional[int] = None
+    min_chars: Optional[int] = None
 
 
 class Message(BaseModel):
@@ -38,7 +39,6 @@ class Case(BaseModel):
 class Suite(BaseModel):
     name: str
     system_prompt: str = ""
-    # Optional path relative to suite file or absolute — loaded at runtime
     system_prompt_file: Optional[str] = None
     model: str = "gpt-4o-mini"
     temperature: float = 0.0
