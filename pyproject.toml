@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "promptguard"
-version = "0.3.0"
+version = "0.4.0"
 description = "Regression testing for LLM apps — parallel runs, baseline compare, CI-ready"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,8 +17,15 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [project.scripts]
 promptguard = "promptguard.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
