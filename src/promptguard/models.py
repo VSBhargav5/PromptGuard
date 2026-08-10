@@ -34,6 +34,7 @@ class Case(BaseModel):
     expect: Expect = Field(default_factory=Expect)
     system_extra: Optional[str] = None
     vars: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
 
 
 class Suite(BaseModel):
