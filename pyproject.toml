@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "promptguard"
-version = "0.4.0"
-description = "Regression testing for LLM apps — parallel runs, baseline compare, CI-ready"
+version = "0.5.0"
+description = "Regression testing for LLM apps — tags, validate, latency stats, CI-ready"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
