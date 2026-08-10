@@ -14,7 +14,9 @@ from .junit import write_junit
 from .models import CaseResult, RunResult
 from .report import write_markdown
 from .runner import load_suite, run_suite
+from .stats import latency_summary
 from .store import RunStore
+from .validate import validate_suite
 
 app = typer.Typer(
     help="PromptGuard – regression testing for LLM apps",
@@ -71,6 +73,14 @@ def _print_report(
                 f"Prompt : [dim]{snap}{'…' if len(result.system_prompt) > 80 else ''}[/dim]"
             )
         console.print(f"Result : {status}")
+        lat = latency_summary(result)
+        if lat:
+            console.print(
+                f"Latency: avg {lat['avg_ms']:.0f}ms  "
+                f"p50 {lat['p50_ms']:.0f}ms  "
+                f"p95 {lat['p95_ms']:.0f}ms  "
+                f"max {lat['max_ms']:.0f}ms"
+            )
         console.print()
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
@@ -202,6 +212,9 @@ def run_cmd(
     case: Optional[List[str]] = typer.Option(
         None, "--case", "-c", help="Run only these case ids (repeatable)"
     ),
+    tag: Optional[List[str]] = typer.Option(
+        None, "--tag", help="Run cases that have any of these tags (repeatable)"
+    ),
     from_failed: Optional[str] = typer.Option(
         None,
         "--from-failed",
@@ -234,6 +247,9 @@ def run_cmd(
     report: Optional[Path] = typer.Option(
         None, "--report", help="Write Markdown report to this path"
     ),
+    json_out: Optional[Path] = typer.Option(
+        None, "--json", help="Write full RunResult JSON to this path"
+    ),
 ):
     """Run a golden suite and print a pass/fail report."""
     if not suite_path.exists():
@@ -252,6 +268,7 @@ def run_cmd(
 
     store = RunStore()
     case_ids = list(case) if case else None
+    tags = list(tag) if tag else None
 
     if from_failed:
         src = None
@@ -271,11 +288,11 @@ def run_cmd(
             f"[dim]Re-running {len(case_ids)} failed case(s) from {src.id[:8]}…[/dim]"
         )
 
-    n = len(case_ids) if case_ids else len(suite.cases)
+    n_hint = "filtered" if case_ids or tags else str(len(suite.cases))
     mode = "fail-fast" if fail_fast else (f"{workers} workers" if workers > 1 else "sequential")
     console.print(
         f"[bold]Running suite[/bold] {suite.name} "
-        f"([cyan]{n}[/cyan] case{'s' if n != 1 else ''}, {mode})..."
+        f"([cyan]{n_hint}[/cyan] cases, {mode})..."
     )
 
     try:
@@ -285,6 +302,7 @@ def run_cmd(
             temperature=temperature,
             base_url=base_url,
             case_ids=case_ids,
+            tags=tags,
             workers=1 if fail_fast else workers,
             retries=retries,
             fail_fast=fail_fast,
@@ -317,6 +335,12 @@ def run_cmd(
         out = write_markdown(result, report)
         console.print(f"[dim]Markdown report → {out}[/dim]")
 
+    if json_out:
+        json_out = Path(json_out)
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        json_out.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        console.print(f"[dim]JSON → {json_out}[/dim]")
+
     _print_report(result, verbose=verbose)
 
     if baseline:
@@ -341,6 +365,29 @@ def run_cmd(
                 raise typer.Exit(1)
 
     raise typer.Exit(0 if result.failed == 0 else 1)
+
+
+@app.command("validate")
+def validate_cmd(
+    suite_path: Path = typer.Argument(..., help="Path to suite YAML"),
+):
+    """Lint a suite file without calling any model."""
+    if not suite_path.exists():
+        console.print(f"[red]Suite not found: {suite_path}[/red]")
+        raise typer.Exit(1)
+    try:
+        suite, warnings = validate_suite(suite_path)
+    except Exception as e:
+        console.print(f"[red]Invalid suite:[/red] {e}")
+        raise typer.Exit(1) from e
+
+    console.print(
+        f"[green]OK[/green]  suite [bold]{suite.name}[/bold]  "
+        f"({len(suite.cases)} cases, model={suite.model})"
+    )
+    for w in warnings:
+        console.print(f"  [yellow]warning[/yellow]  {w}")
+    raise typer.Exit(0)
 
 
 @app.command("compare")
@@ -434,6 +481,7 @@ vars:
 
 cases:
   - id: greeting
+    tags: [smoke]
     input: "Hi"
     expect:
       contains:
@@ -441,12 +489,14 @@ cases:
       max_chars: 400
 
   - id: product_mention
+    tags: [policy]
     input: "What product do you support?"
     expect:
       contains:
         - "{{{{product}}}}"
 
   - id: multi_turn_example
+    tags: [multi-turn]
     messages:
       - role: user
         content: "My order id is {{{{order_id}}}}"
