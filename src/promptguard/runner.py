@@ -34,15 +34,28 @@ def load_suite(path: Path) -> Suite:
     return suite
 
 
-def filter_cases(suite: Suite, case_ids: Optional[Sequence[str]] = None) -> list[Case]:
-    if not case_ids:
-        return list(suite.cases)
-    wanted = set(case_ids)
-    selected = [c for c in suite.cases if c.id in wanted]
-    missing = wanted - {c.id for c in selected}
-    if missing:
-        raise ValueError(f"Unknown case id(s): {', '.join(sorted(missing))}")
-    return selected
+def filter_cases(
+    suite: Suite,
+    case_ids: Optional[Sequence[str]] = None,
+    tags: Optional[Sequence[str]] = None,
+) -> list[Case]:
+    cases = list(suite.cases)
+
+    if tags:
+        wanted_tags = set(tags)
+        cases = [c for c in cases if wanted_tags & set(c.tags or [])]
+        if not cases:
+            raise ValueError(f"No cases match tag(s): {', '.join(sorted(wanted_tags))}")
+
+    if case_ids:
+        wanted = set(case_ids)
+        selected = [c for c in cases if c.id in wanted]
+        missing = wanted - {c.id for c in selected}
+        if missing:
+            raise ValueError(f"Unknown case id(s): {', '.join(sorted(missing))}")
+        cases = selected
+
+    return cases
 
 
 def _build_messages(suite: Suite, case: Case) -> tuple[list[dict], str]:
@@ -125,7 +138,7 @@ def _run_one_case(
                 )
             last_error = None
             break
-        except FuturesTimeout as e:
+        except FuturesTimeout:
             last_error = TimeoutError(f"case timed out after {timeout}s")
             break
         except Exception as e:
@@ -181,6 +194,7 @@ def run_suite(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     case_ids: Optional[Sequence[str]] = None,
+    tags: Optional[Sequence[str]] = None,
     workers: int = 1,
     retries: int = 0,
     fail_fast: bool = False,
@@ -196,7 +210,7 @@ def run_suite(
 
     use_model = model or suite.model
     use_temp = suite.temperature if temperature is None else temperature
-    cases = filter_cases(suite, case_ids)
+    cases = filter_cases(suite, case_ids=case_ids, tags=tags)
     workers = max(1, workers)
 
     result = RunResult(
@@ -207,6 +221,7 @@ def run_suite(
         total=len(cases),
         meta={
             "case_filter": list(case_ids) if case_ids else None,
+            "tag_filter": list(tags) if tags else None,
             "workers": workers,
             "retries": retries,
             "fail_fast": fail_fast,
