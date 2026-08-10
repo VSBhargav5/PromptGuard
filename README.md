@@ -4,7 +4,7 @@
 
 Change a prompt or model → re-run the suite → see **what regressed** before users do.
 
-**Current version: 0.4.0**
+**Current version: 0.5.0**
 
 ---
 
@@ -12,29 +12,24 @@ Change a prompt or model → re-run the suite → see **what regressed** before 
 
 | Area | Capability |
 |------|------------|
-| Suites | YAML cases, `{{vars}}`, multi-turn, `system_prompt_file` |
+| Suites | YAML cases, tags, `{{vars}}`, multi-turn, `system_prompt_file` |
 | Scoring | contains / not_contains / regex / exact / json / similar_to / min_chars / max_chars |
-| Runs | parallel workers, retries, **timeout**, fail-fast, **`--from-failed`** |
-| History | Prompt snapshot, local store |
-| Compare | baseline last/last-pass, **output text change** flags |
-| CI | **offline unit tests**, JUnit, Markdown, GitHub Action |
-| DX | `init`, OpenAI-compatible `--base-url` |
+| Runs | parallel, retries, timeout, fail-fast, `--from-failed`, **`--tag`** |
+| DX | **`validate`** (no API), **`--json`**, latency avg/p50/p95 |
+| History | Prompt snapshot, local store, baseline compare + output-change flags |
+| CI | Offline unit tests always; live suite when `OPENAI_API_KEY` is set |
 
 ---
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/VSBhargav5/PromptGuard.git
-cd PromptGuard
 pip install -e ".[dev]"
-export OPENAI_API_KEY="sk-..."
+pytest -q
 
-pytest -q   # offline, no API key needed
-
-python -m promptguard run examples/support_bot_suite.yaml --workers 4 --timeout 45
-python -m promptguard run examples/support_bot_suite.yaml --baseline last
-python -m promptguard run examples/support_bot_suite.yaml --from-failed last
+python -m promptguard validate examples/support_bot_suite.yaml
+python -m promptguard run examples/support_bot_suite.yaml --tag smoke --timeout 45
+python -m promptguard run examples/support_bot_suite.yaml --json out.json --baseline last
 ```
 
 ---
@@ -42,24 +37,14 @@ python -m promptguard run examples/support_bot_suite.yaml --from-failed last
 ## CLI
 
 ```bash
+python -m promptguard validate <suite.yaml>
 python -m promptguard run <suite.yaml> \
-  [-c CASE]... [--from-failed last|<id>] \
-  [-w WORKERS] [--retries N] [--timeout SECS] [--fail-fast] \
-  [--baseline last|last-pass|<id>] \
-  [--junit path] [--report path] [-v]
-
+  [-c CASE]... [--tag TAG]... [--from-failed last] \
+  [-w N] [--retries N] [--timeout S] [--fail-fast] \
+  [--baseline last|last-pass] [--junit path] [--report path] [--json path] [-v]
 python -m promptguard compare <baseline_id> <current_id>
-python -m promptguard list-runs [--suite name]
-python -m promptguard show-run <id> [-v]
-python -m promptguard init [name] [-o suite.yaml]
+python -m promptguard list-runs | show-run <id> | init [name]
 ```
-
----
-
-## GitHub Actions
-
-[`.github/workflows/promptguard.yml`](.github/workflows/promptguard.yml) always runs **pytest**.  
-Live suite runs only when `OPENAI_API_KEY` is set as a repo secret.
 
 ---
 
