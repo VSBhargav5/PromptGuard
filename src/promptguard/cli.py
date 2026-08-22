@@ -10,12 +10,14 @@ from rich.table import Table
 from rich.text import Text
 
 from .compare import compare_runs
+from .html_report import write_html
 from .junit import write_junit
 from .models import CaseResult, RunResult
 from .report import write_markdown
 from .runner import load_suite, run_suite
 from .stats import latency_summary
 from .store import RunStore
+from .summary import write_compare_pr_summary, write_pr_summary
 from .validate import validate_suite
 
 app = typer.Typer(
@@ -42,7 +44,7 @@ def _render_failure_block(cr: CaseResult) -> None:
     ):
         preview = " ".join(cr.output.split())[:200]
         console.print(
-            f"      [dim]output[/dim]    {preview}{'…' if len(cr.output) > 200 else ''}"
+            f"      [dim]output[/dim]    {preview}{'\u2026' if len(cr.output) > 200 else ''}"
         )
 
 
@@ -70,7 +72,7 @@ def _print_report(
         if result.system_prompt:
             snap = result.system_prompt.replace("\n", " ")[:80]
             console.print(
-                f"Prompt : [dim]{snap}{'…' if len(result.system_prompt) > 80 else ''}[/dim]"
+                f"Prompt : [dim]{snap}{'\u2026' if len(result.system_prompt) > 80 else ''}[/dim]"
             )
         console.print(f"Result : {status}")
         lat = latency_summary(result)
@@ -110,7 +112,7 @@ def _print_report(
             if verbose and cr.output:
                 console.print(
                     Panel(
-                        cr.output[:2000] + ("…" if len(cr.output) > 2000 else ""),
+                        cr.output[:2000] + ("\u2026" if len(cr.output) > 2000 else ""),
                         title="full output",
                         border_style="dim",
                         expand=False,
@@ -126,7 +128,7 @@ def _print_report(
                 preview = " ".join(cr.output.split())[:120] if cr.output else "(empty)"
                 console.print(f"  [green]PASS[/green]  {cr.case_id}")
                 console.print(
-                    f"         {preview}{'…' if cr.output and len(cr.output) > 120 else ''}"
+                    f"         {preview}{'\u2026' if cr.output and len(cr.output) > 120 else ''}"
                 )
 
 
@@ -247,6 +249,14 @@ def run_cmd(
     report: Optional[Path] = typer.Option(
         None, "--report", help="Write Markdown report to this path"
     ),
+    pr_summary: Optional[Path] = typer.Option(
+        None,
+        "--pr-summary",
+        help="Write a short PR-comment Markdown summary to this path",
+    ),
+    html: Optional[Path] = typer.Option(
+        None, "--html", help="Write a self-contained HTML report to this path"
+    ),
     json_out: Optional[Path] = typer.Option(
         None, "--json", help="Write full RunResult JSON to this path"
     ),
@@ -335,6 +345,14 @@ def run_cmd(
         out = write_markdown(result, report)
         console.print(f"[dim]Markdown report → {out}[/dim]")
 
+    if pr_summary:
+        out = write_pr_summary(result, pr_summary)
+        console.print(f"[dim]PR summary → {out}[/dim]")
+
+    if html:
+        out = write_html(result, html)
+        console.print(f"[dim]HTML report → {out}[/dim]")
+
     if json_out:
         json_out = Path(json_out)
         json_out.parent.mkdir(parents=True, exist_ok=True)
@@ -361,6 +379,11 @@ def run_cmd(
         else:
             cmp = compare_runs(base_run, result)
             _print_compare(cmp)
+            if pr_summary:
+                # append compare section next to run summary path
+                compare_path = Path(str(pr_summary).replace(".md", "") + "-compare.md")
+                write_compare_pr_summary(cmp, compare_path)
+                console.print(f"[dim]Compare PR summary → {compare_path}[/dim]")
             if cmp.regressed:
                 raise typer.Exit(1)
 
@@ -394,6 +417,9 @@ def validate_cmd(
 def compare_cmd(
     baseline_id: str = typer.Argument(..., help="Baseline run id (or prefix)"),
     current_id: str = typer.Argument(..., help="Current run id (or prefix)"),
+    pr_summary: Optional[Path] = typer.Option(
+        None, "--pr-summary", help="Write PR-comment Markdown for this compare"
+    ),
 ):
     """Diff two saved runs: regressions, fixes, output changes."""
     store = RunStore()
@@ -408,6 +434,9 @@ def compare_cmd(
 
     cmp = compare_runs(baseline, current)
     _print_compare(cmp)
+    if pr_summary:
+        out = write_compare_pr_summary(cmp, pr_summary)
+        console.print(f"[dim]PR summary → {out}[/dim]")
     raise typer.Exit(1 if cmp.regressed else 0)
 
 
@@ -446,6 +475,8 @@ def list_runs_cmd(
 def show_run_cmd(
     run_id: str = typer.Argument(..., help="Full or short run ID"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
+    pr_summary: Optional[Path] = typer.Option(None, "--pr-summary"),
+    html: Optional[Path] = typer.Option(None, "--html"),
 ):
     """Show details of a past run."""
     run = RunStore().get(run_id)
@@ -455,6 +486,12 @@ def show_run_cmd(
 
     console.print(f"[bold]Run {run.id}[/bold]")
     _print_report(run, verbose=verbose, show_header=True)
+    if pr_summary:
+        out = write_pr_summary(run, pr_summary)
+        console.print(f"[dim]PR summary → {out}[/dim]")
+    if html:
+        out = write_html(run, html)
+        console.print(f"[dim]HTML report → {out}[/dim]")
 
 
 @app.command("init")
