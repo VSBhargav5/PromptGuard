@@ -44,7 +44,7 @@ def _render_failure_block(cr: CaseResult) -> None:
     ):
         preview = " ".join(cr.output.split())[:200]
         console.print(
-            f"      [dim]output[/dim]    {preview}{'\u2026' if len(cr.output) > 200 else ''}"
+            f"      [dim]output[/dim]    {preview}{'…' if len(cr.output) > 200 else ''}"
         )
 
 
@@ -72,7 +72,7 @@ def _print_report(
         if result.system_prompt:
             snap = result.system_prompt.replace("\n", " ")[:80]
             console.print(
-                f"Prompt : [dim]{snap}{'\u2026' if len(result.system_prompt) > 80 else ''}[/dim]"
+                f"Prompt : [dim]{snap}{'…' if len(result.system_prompt) > 80 else ''}[/dim]"
             )
         console.print(f"Result : {status}")
         lat = latency_summary(result)
@@ -112,7 +112,7 @@ def _print_report(
             if verbose and cr.output:
                 console.print(
                     Panel(
-                        cr.output[:2000] + ("\u2026" if len(cr.output) > 2000 else ""),
+                        cr.output[:2000] + ("…" if len(cr.output) > 2000 else ""),
                         title="full output",
                         border_style="dim",
                         expand=False,
@@ -128,7 +128,7 @@ def _print_report(
                 preview = " ".join(cr.output.split())[:120] if cr.output else "(empty)"
                 console.print(f"  [green]PASS[/green]  {cr.case_id}")
                 console.print(
-                    f"         {preview}{'\u2026' if cr.output and len(cr.output) > 120 else ''}"
+                    f"         {preview}{'…' if cr.output and len(cr.output) > 120 else ''}"
                 )
 
 
@@ -199,8 +199,16 @@ def _print_compare(cmp) -> None:
             f"[yellow]{len(changed)} output text changed[/yellow] (same pass/fail): "
             + ", ".join(d.case_id for d in changed)
         )
-    if not cmp.regressed and not cmp.fixed:
-        console.print("[dim]No pass/fail changes between runs.[/dim]")
+    if cmp.removed_cases:
+        console.print(
+            f"[yellow]{len(cmp.removed_cases)} baseline case(s) not evaluated in current run[/yellow]: "
+            + ", ".join(d.case_id for d in cmp.removed_cases)
+        )
+    shared = [d for d in cmp.deltas if d.kind not in ("new", "removed")]
+    if not shared:
+        console.print("[yellow]No shared cases; pass/fail changes cannot be assessed.[/yellow]")
+    elif not cmp.regressed and not cmp.fixed:
+        console.print("[dim]No pass/fail changes among shared cases.[/dim]")
 
 
 @app.command("run")
@@ -239,6 +247,9 @@ def run_cmd(
         "--baseline",
         help="Compare against run id, or 'last' / 'last-pass' for this suite",
     ),
+    fail_on_removed: bool = typer.Option(
+        False, "--fail-on-removed", help="Fail if a baseline case is absent; requires --baseline"
+    ),
     no_save: bool = typer.Option(False, "--no-save", help="Do not write run history"),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show full outputs and passed-case previews"
@@ -262,6 +273,10 @@ def run_cmd(
     ),
 ):
     """Run a golden suite and print a pass/fail report."""
+    if fail_on_removed and not baseline:
+        console.print("[red]--fail-on-removed requires --baseline.[/red]")
+        raise typer.Exit(1)
+
     if not suite_path.exists():
         console.print(f"[red]Suite not found: {suite_path}[/red]")
         raise typer.Exit(1)
@@ -373,6 +388,11 @@ def run_cmd(
             base_run = store.get(baseline)
 
         if not base_run:
+            if fail_on_removed:
+                console.print(
+                    f"[red]No baseline run found for '{baseline}'; cannot verify case coverage.[/red]"
+                )
+                raise typer.Exit(1)
             console.print(
                 f"[yellow]No baseline run found for '{baseline}' — skip compare.[/yellow]"
             )
@@ -384,7 +404,7 @@ def run_cmd(
                 compare_path = Path(str(pr_summary).replace(".md", "") + "-compare.md")
                 write_compare_pr_summary(cmp, compare_path)
                 console.print(f"[dim]Compare PR summary → {compare_path}[/dim]")
-            if cmp.regressed:
+            if cmp.regressed or (fail_on_removed and cmp.removed_cases):
                 raise typer.Exit(1)
 
     raise typer.Exit(0 if result.failed == 0 else 1)
@@ -420,6 +440,9 @@ def compare_cmd(
     pr_summary: Optional[Path] = typer.Option(
         None, "--pr-summary", help="Write PR-comment Markdown for this compare"
     ),
+    fail_on_removed: bool = typer.Option(
+        False, "--fail-on-removed", help="Fail if any baseline case is absent from the current run"
+    ),
 ):
     """Diff two saved runs: regressions, fixes, output changes."""
     store = RunStore()
@@ -437,7 +460,7 @@ def compare_cmd(
     if pr_summary:
         out = write_compare_pr_summary(cmp, pr_summary)
         console.print(f"[dim]PR summary → {out}[/dim]")
-    raise typer.Exit(1 if cmp.regressed else 0)
+    raise typer.Exit(1 if cmp.regressed or (fail_on_removed and cmp.removed_cases) else 0)
 
 
 @app.command("list-runs")
