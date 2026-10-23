@@ -14,16 +14,6 @@ def validate_suite(path: Path) -> tuple[Suite, list[str]]:
     if not suite.cases:
         raise ValueError("Suite has no cases")
 
-    ids = [c.id for c in suite.cases]
-    if len(ids) != len(set(ids)):
-        seen: set[str] = set()
-        dups = []
-        for i in ids:
-            if i in seen:
-                dups.append(i)
-            seen.add(i)
-        raise ValueError(f"Duplicate case id(s): {', '.join(sorted(set(dups)))}")
-
     for case in suite.cases:
         if not case.input and not case.messages:
             warnings.append(f"{case.id}: no input and no messages")

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from promptguard.models import Expect
+from promptguard.models import Case, Expect, Suite
 
 
 @pytest.mark.parametrize("threshold", [-0.1, 1.1, float("nan"), float("inf")])
@@ -24,3 +24,19 @@ def test_inverted_length_range_is_rejected():
 def test_length_and_similarity_boundaries_remain_valid():
     assert Expect(min_chars=0, max_chars=0, min_similarity=0).max_chars == 0
     assert Expect(min_chars=5, max_chars=5, min_similarity=1).min_similarity == 1
+
+
+@pytest.mark.parametrize("case_id", ["", " ", "\t\n"])
+def test_blank_case_ids_are_rejected(case_id):
+    with pytest.raises(ValidationError, match="Case id must not be blank"):
+        Case(id=case_id)
+
+
+def test_direct_suite_construction_rejects_duplicate_ids():
+    with pytest.raises(ValidationError, match="Duplicate case id"):
+        Suite(name="demo", cases=[Case(id="refund"), Case(id="refund")])
+
+
+def test_suite_preserves_distinct_case_identity_and_order():
+    suite = Suite(name="demo", cases=[Case(id="refund"), Case(id="refund-followup")])
+    assert [case.id for case in suite.cases] == ["refund", "refund-followup"]

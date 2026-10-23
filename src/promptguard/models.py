@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Expect(BaseModel):
@@ -43,6 +43,13 @@ class Case(BaseModel):
     vars: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
 
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Case id must not be blank")
+        return value
+
 
 class Suite(BaseModel):
     name: str
@@ -52,6 +59,18 @@ class Suite(BaseModel):
     temperature: float = 0.0
     vars: dict[str, Any] = Field(default_factory=dict)
     cases: list[Case] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_case_ids(self) -> "Suite":
+        seen: set[str] = set()
+        duplicates: set[str] = set()
+        for case in self.cases:
+            if case.id in seen:
+                duplicates.add(case.id)
+            seen.add(case.id)
+        if duplicates:
+            raise ValueError(f"Duplicate case id(s): {', '.join(sorted(duplicates))}")
+        return self
 
 
 class Failure(BaseModel):
