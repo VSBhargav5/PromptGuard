@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Expect(BaseModel):
@@ -17,9 +17,16 @@ class Expect(BaseModel):
     json_valid: bool = False
     json_keys: list[str] = Field(default_factory=list)
     similar_to: Optional[str] = None
-    min_similarity: float = 0.5
-    max_chars: Optional[int] = None
-    min_chars: Optional[int] = None
+    min_similarity: float = Field(default=0.5, ge=0, le=1)
+    max_chars: Optional[int] = Field(default=None, ge=0)
+    min_chars: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_length_range(self) -> "Expect":
+        if self.min_chars is not None and self.max_chars is not None:
+            if self.min_chars > self.max_chars:
+                raise ValueError("min_chars must not exceed max_chars")
+        return self
 
 
 class Message(BaseModel):
