@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+import re
 from pathlib import Path
-from xml.dom import minidom
 
 from .models import RunResult
+
+
+_INVALID_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
+def _xml_text(value: str) -> str:
+    # Preserve invalid XML 1.0 characters as visible escapes instead of losing
+    # model-output evidence or failing the whole report.
+    return _INVALID_XML.sub(lambda match: f"\\u{ord(match.group(0)):04x}", value)
 
 
 def to_junit_xml(result: RunResult) -> str:
@@ -12,7 +21,7 @@ def to_junit_xml(result: RunResult) -> str:
     suite = ET.Element(
         "testsuite",
         {
-            "name": result.suite_name,
+            "name": _xml_text(result.suite_name),
             "tests": str(result.total),
             "failures": str(result.failed),
             "errors": "0",
@@ -27,8 +36,8 @@ def to_junit_xml(result: RunResult) -> str:
             suite,
             "testcase",
             {
-                "classname": result.suite_name,
-                "name": cr.case_id,
+                "classname": _xml_text(result.suite_name),
+                "name": _xml_text(cr.case_id),
             },
         )
         if cr.latency_ms is not None:
@@ -45,17 +54,17 @@ def to_junit_xml(result: RunResult) -> str:
                 case,
                 "failure",
                 {
-                    "message": messages[0] if messages else "failed",
+                    "message": _xml_text(messages[0] if messages else "failed"),
                     "type": "assertion",
                 },
             )
             body = "\n".join(messages)
             if cr.output:
                 body += f"\n\noutput:\n{cr.output[:1500]}"
-            fail.text = body
+            fail.text = _xml_text(body)
 
-    rough = ET.tostring(suite, encoding="unicode")
-    return minidom.parseString(rough).toprettyxml(indent="  ")
+    ET.indent(suite, space="  ")
+    return ET.tostring(suite, encoding="unicode", xml_declaration=True) + "\n"
 
 
 def write_junit(result: RunResult, path: Path) -> Path:

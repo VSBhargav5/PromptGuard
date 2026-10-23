@@ -27,6 +27,14 @@ app = typer.Typer(
 console = Console()
 
 
+def _load_run(store: RunStore, run_id: str) -> Optional[RunResult]:
+    try:
+        return store.get(run_id)
+    except (ValueError, OSError) as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(1) from exc
+
+
 def _render_failure_block(cr: CaseResult) -> None:
     for f in cr.failures:
         if isinstance(f, str):
@@ -300,7 +308,7 @@ def run_cmd(
         if from_failed in ("last", "latest"):
             src = store.latest_for_suite(suite.name)
         else:
-            src = store.get(from_failed)
+            src = _load_run(store, from_failed)
         if not src:
             console.print(f"[red]No run found for --from-failed {from_failed}[/red]")
             raise typer.Exit(1)
@@ -313,7 +321,24 @@ def run_cmd(
             f"[dim]Re-running {len(case_ids)} failed case(s) from {src.id[:8]}…[/dim]"
         )
 
-    n_hint = "filtered" if case_ids or tags else str(len(suite.cases))
+    base_run = None
+    if baseline:
+        if baseline in ("last", "latest"):
+            base_run = store.latest_for_suite(suite.name)
+        elif baseline in ("last-pass", "last-passing", "green"):
+            base_run = store.latest_for_suite(suite.name, only_passing=True)
+        else:
+            base_run = _load_run(store, baseline)
+        if base_run is None and fail_on_removed:
+            console.print(
+                f"[red]No baseline run found for '{baseline}'; cannot verify case coverage.[/red]"
+            )
+            raise typer.Exit(1)
+        if base_run is not None and base_run.suite_name != suite.name:
+            console.print("Cannot compare different suites", style="red")
+            raise typer.Exit(1)
+
+    n_hint = "filtered" if case_ids is not None or tags else str(len(suite.cases))
     mode = "fail-fast" if fail_fast else (f"{workers} workers" if workers > 1 else "sequential")
     console.print(
         f"[bold]Running suite[/bold] {suite.name} "
@@ -377,27 +402,16 @@ def run_cmd(
     _print_report(result, verbose=verbose)
 
     if baseline:
-        base_run = None
-        if baseline in ("last", "latest"):
-            base_run = store.latest_for_suite(suite.name, exclude_id=result.id)
-        elif baseline in ("last-pass", "last-passing", "green"):
-            base_run = store.latest_for_suite(
-                suite.name, only_passing=True, exclude_id=result.id
-            )
-        else:
-            base_run = store.get(baseline)
-
         if not base_run:
-            if fail_on_removed:
-                console.print(
-                    f"[red]No baseline run found for '{baseline}'; cannot verify case coverage.[/red]"
-                )
-                raise typer.Exit(1)
             console.print(
                 f"[yellow]No baseline run found for '{baseline}' — skip compare.[/yellow]"
             )
         else:
-            cmp = compare_runs(base_run, result)
+            try:
+                cmp = compare_runs(base_run, result)
+            except ValueError as exc:
+                console.print(str(exc), style="red", markup=False)
+                raise typer.Exit(1) from exc
             _print_compare(cmp)
             if pr_summary:
                 # append compare section next to run summary path
@@ -446,8 +460,8 @@ def compare_cmd(
 ):
     """Diff two saved runs: regressions, fixes, output changes."""
     store = RunStore()
-    baseline = store.get(baseline_id)
-    current = store.get(current_id)
+    baseline = _load_run(store, baseline_id)
+    current = _load_run(store, current_id)
     if not baseline:
         console.print(f"[red]Baseline run not found: {baseline_id}[/red]")
         raise typer.Exit(1)
@@ -455,7 +469,11 @@ def compare_cmd(
         console.print(f"[red]Current run not found: {current_id}[/red]")
         raise typer.Exit(1)
 
-    cmp = compare_runs(baseline, current)
+    try:
+        cmp = compare_runs(baseline, current)
+    except ValueError as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(1) from exc
     _print_compare(cmp)
     if pr_summary:
         out = write_compare_pr_summary(cmp, pr_summary)
@@ -502,7 +520,7 @@ def show_run_cmd(
     html: Optional[Path] = typer.Option(None, "--html"),
 ):
     """Show details of a past run."""
-    run = RunStore().get(run_id)
+    run = _load_run(RunStore(), run_id)
     if not run:
         console.print(f"[red]Run not found: {run_id}[/red]")
         raise typer.Exit(1)

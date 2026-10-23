@@ -100,3 +100,79 @@ def test_run_coverage_gate(store, monkeypatch, tmp_path, strict, expected, basel
     assert result.exit_code == expected, result.output
     if strict and not baseline_exists:
         assert "cannot verify case coverage" in result.output
+
+
+def test_from_failed_empty_intersection_does_not_run_entire_suite(store, monkeypatch, tmp_path):
+    from promptguard import runner
+
+    previous = _run([("failed", False), ("passed", True)])
+    store.save(previous)
+    suite = tmp_path / "suite.yaml"
+    suite.write_text(
+        "name: coverage-demo\ncases:\n  - id: failed\n    input: help\n"
+        "  - id: passed\n    input: hello\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "OpenAI", lambda **kwargs: pytest.fail("Unexpected client"))
+    result = CliRunner().invoke(
+        cli.app, ["run", str(suite), "--from-failed", previous.id, "--case", "passed"]
+    )
+    assert result.exit_code == 1, result.output
+    assert "No cases selected" in result.output
+    assert len(list(store.root.glob("*.json"))) == 1
+
+
+@pytest.mark.parametrize("command", [["show-run", "common"], ["compare", "common", "common-one"]])
+def test_ambiguous_run_id_has_a_clear_cli_error(store, command):
+    for run_id in ("common-one", "common-two"):
+        run = _run([("shared", True)])
+        run.id = run_id
+        store.save(run)
+    result = CliRunner().invoke(cli.app, command)
+    assert result.exit_code == 1, result.output
+    assert "Ambiguous run ID prefix" in result.output
+
+
+def test_path_run_id_has_a_clear_cli_error(store):
+    result = CliRunner().invoke(cli.app, ["show-run", "../outside"])
+    assert result.exit_code == 1, result.output
+    assert "Run ID" in result.output
+
+
+def test_compare_different_suites_fails_without_writing_a_report(store, tmp_path):
+    base = _run([("shared", True)])
+    cur = _run([("shared", True)])
+    cur.suite_name = "unrelated"
+    store.save(base)
+    store.save(cur)
+    report = tmp_path / "comparison.md"
+    result = CliRunner().invoke(cli.app, ["compare", base.id, cur.id, "--pr-summary", str(report)])
+    assert result.exit_code == 1, result.output
+    assert "Cannot compare different suites" in result.output
+    assert not report.exists()
+
+
+@pytest.mark.parametrize("reference", ["last", "last-pass", "missing-id"])
+def test_strict_missing_baseline_fails_before_model_execution(store, monkeypatch, tmp_path, reference):
+    suite = tmp_path / "suite.yaml"
+    suite.write_text("name: coverage-demo\ncases:\n  - id: shared\n    input: hello\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "run_suite", lambda *args, **kwargs: pytest.fail("Unexpected model run"))
+    result = CliRunner().invoke(
+        cli.app, ["run", str(suite), "--baseline", reference, "--fail-on-removed"]
+    )
+    assert result.exit_code == 1, result.output
+    assert "cannot verify case coverage" in result.output
+    assert list(store.root.glob("*.json")) == []
+
+
+def test_unrelated_baseline_fails_before_model_execution(store, monkeypatch, tmp_path):
+    base = _run([("shared", True)])
+    base.suite_name = "unrelated"
+    store.save(base)
+    suite = tmp_path / "suite.yaml"
+    suite.write_text("name: coverage-demo\ncases:\n  - id: shared\n    input: hello\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "run_suite", lambda *args, **kwargs: pytest.fail("Unexpected model run"))
+    result = CliRunner().invoke(cli.app, ["run", str(suite), "--baseline", base.id])
+    assert result.exit_code == 1, result.output
+    assert "Cannot compare different suites" in result.output
+    assert len(list(store.root.glob("*.json"))) == 1

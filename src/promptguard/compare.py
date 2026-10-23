@@ -62,6 +62,10 @@ class CompareResult:
 
 
 def compare_runs(baseline: RunResult, current: RunResult) -> CompareResult:
+    if baseline.suite_name != current.suite_name:
+        raise ValueError(
+            f"Cannot compare different suites: {baseline.suite_name!r} and {current.suite_name!r}"
+        )
     base_map = {c.case_id: c for c in baseline.case_results}
     cur_map = {c.case_id: c for c in current.case_results}
     ids = sorted(set(base_map) | set(cur_map))

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Expect(BaseModel):
@@ -17,9 +18,26 @@ class Expect(BaseModel):
     json_valid: bool = False
     json_keys: list[str] = Field(default_factory=list)
     similar_to: Optional[str] = None
-    min_similarity: float = 0.5
-    max_chars: Optional[int] = None
-    min_chars: Optional[int] = None
+    min_similarity: float = Field(default=0.5, ge=0, le=1)
+    max_chars: Optional[int] = Field(default=None, ge=0)
+    min_chars: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_length_range(self) -> "Expect":
+        if self.min_chars is not None and self.max_chars is not None:
+            if self.min_chars > self.max_chars:
+                raise ValueError("min_chars must not exceed max_chars")
+        return self
+
+    @field_validator("regex")
+    @classmethod
+    def validate_regex(cls, patterns: list[str]) -> list[str]:
+        for pattern in patterns:
+            try:
+                re.compile(pattern, flags=re.IGNORECASE | re.DOTALL)
+            except re.error as exc:
+                raise ValueError(f"Invalid expectation regex {pattern!r}: {exc}") from exc
+        return patterns
 
 
 class Message(BaseModel):
@@ -36,6 +54,13 @@ class Case(BaseModel):
     vars: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
 
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Case id must not be blank")
+        return value
+
 
 class Suite(BaseModel):
     name: str
@@ -45,6 +70,18 @@ class Suite(BaseModel):
     temperature: float = 0.0
     vars: dict[str, Any] = Field(default_factory=dict)
     cases: list[Case] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_case_ids(self) -> "Suite":
+        seen: set[str] = set()
+        duplicates: set[str] = set()
+        for case in self.cases:
+            if case.id in seen:
+                duplicates.add(case.id)
+            seen.add(case.id)
+        if duplicates:
+            raise ValueError(f"Duplicate case id(s): {', '.join(sorted(duplicates))}")
+        return self
 
 
 class Failure(BaseModel):
