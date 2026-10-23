@@ -405,7 +405,11 @@ def run_cmd(
                 f"[yellow]No baseline run found for '{baseline}' — skip compare.[/yellow]"
             )
         else:
-            cmp = compare_runs(base_run, result)
+            try:
+                cmp = compare_runs(base_run, result)
+            except ValueError as exc:
+                console.print(str(exc), style="red", markup=False)
+                raise typer.Exit(1) from exc
             _print_compare(cmp)
             if pr_summary:
                 # append compare section next to run summary path
@@ -463,7 +467,11 @@ def compare_cmd(
         console.print(f"[red]Current run not found: {current_id}[/red]")
         raise typer.Exit(1)
 
-    cmp = compare_runs(baseline, current)
+    try:
+        cmp = compare_runs(baseline, current)
+    except ValueError as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(1) from exc
     _print_compare(cmp)
     if pr_summary:
         out = write_compare_pr_summary(cmp, pr_summary)

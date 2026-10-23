@@ -137,3 +137,16 @@ def test_path_run_id_has_a_clear_cli_error(store):
     result = CliRunner().invoke(cli.app, ["show-run", "../outside"])
     assert result.exit_code == 1, result.output
     assert "Run ID" in result.output
+
+
+def test_compare_different_suites_fails_without_writing_a_report(store, tmp_path):
+    base = _run([("shared", True)])
+    cur = _run([("shared", True)])
+    cur.suite_name = "unrelated"
+    store.save(base)
+    store.save(cur)
+    report = tmp_path / "comparison.md"
+    result = CliRunner().invoke(cli.app, ["compare", base.id, cur.id, "--pr-summary", str(report)])
+    assert result.exit_code == 1, result.output
+    assert "Cannot compare different suites" in result.output
+    assert not report.exists()

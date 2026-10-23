@@ -1,3 +1,5 @@
+import pytest
+
 from promptguard.compare import compare_runs
 from promptguard.models import CaseResult, RunResult
 
@@ -56,3 +58,10 @@ def test_new_and_removed_cases_are_not_regressions():
     assert cmp.removed_cases[0].current_passed is None
     assert cmp.regressed == []
     assert cmp.fixed == []
+
+
+def test_comparison_rejects_different_suites_with_matching_case_ids():
+    base = _run("refund-policy", [("shared", True, "allowed")])
+    cur = _run("ranking-policy", [("shared", False, "different task")])
+    with pytest.raises(ValueError, match="Cannot compare different suites"):
+        compare_runs(base, cur)
