@@ -321,7 +321,24 @@ def run_cmd(
             f"[dim]Re-running {len(case_ids)} failed case(s) from {src.id[:8]}…[/dim]"
         )
 
-    n_hint = "filtered" if case_ids or tags else str(len(suite.cases))
+    base_run = None
+    if baseline:
+        if baseline in ("last", "latest"):
+            base_run = store.latest_for_suite(suite.name)
+        elif baseline in ("last-pass", "last-passing", "green"):
+            base_run = store.latest_for_suite(suite.name, only_passing=True)
+        else:
+            base_run = _load_run(store, baseline)
+        if base_run is None and fail_on_removed:
+            console.print(
+                f"[red]No baseline run found for '{baseline}'; cannot verify case coverage.[/red]"
+            )
+            raise typer.Exit(1)
+        if base_run is not None and base_run.suite_name != suite.name:
+            console.print("Cannot compare different suites", style="red")
+            raise typer.Exit(1)
+
+    n_hint = "filtered" if case_ids is not None or tags else str(len(suite.cases))
     mode = "fail-fast" if fail_fast else (f"{workers} workers" if workers > 1 else "sequential")
     console.print(
         f"[bold]Running suite[/bold] {suite.name} "
@@ -385,22 +402,7 @@ def run_cmd(
     _print_report(result, verbose=verbose)
 
     if baseline:
-        base_run = None
-        if baseline in ("last", "latest"):
-            base_run = store.latest_for_suite(suite.name, exclude_id=result.id)
-        elif baseline in ("last-pass", "last-passing", "green"):
-            base_run = store.latest_for_suite(
-                suite.name, only_passing=True, exclude_id=result.id
-            )
-        else:
-            base_run = _load_run(store, baseline)
-
         if not base_run:
-            if fail_on_removed:
-                console.print(
-                    f"[red]No baseline run found for '{baseline}'; cannot verify case coverage.[/red]"
-                )
-                raise typer.Exit(1)
             console.print(
                 f"[yellow]No baseline run found for '{baseline}' — skip compare.[/yellow]"
             )

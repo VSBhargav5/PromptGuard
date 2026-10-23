@@ -150,3 +150,29 @@ def test_compare_different_suites_fails_without_writing_a_report(store, tmp_path
     assert result.exit_code == 1, result.output
     assert "Cannot compare different suites" in result.output
     assert not report.exists()
+
+
+@pytest.mark.parametrize("reference", ["last", "last-pass", "missing-id"])
+def test_strict_missing_baseline_fails_before_model_execution(store, monkeypatch, tmp_path, reference):
+    suite = tmp_path / "suite.yaml"
+    suite.write_text("name: coverage-demo\ncases:\n  - id: shared\n    input: hello\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "run_suite", lambda *args, **kwargs: pytest.fail("Unexpected model run"))
+    result = CliRunner().invoke(
+        cli.app, ["run", str(suite), "--baseline", reference, "--fail-on-removed"]
+    )
+    assert result.exit_code == 1, result.output
+    assert "cannot verify case coverage" in result.output
+    assert list(store.root.glob("*.json")) == []
+
+
+def test_unrelated_baseline_fails_before_model_execution(store, monkeypatch, tmp_path):
+    base = _run([("shared", True)])
+    base.suite_name = "unrelated"
+    store.save(base)
+    suite = tmp_path / "suite.yaml"
+    suite.write_text("name: coverage-demo\ncases:\n  - id: shared\n    input: hello\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "run_suite", lambda *args, **kwargs: pytest.fail("Unexpected model run"))
+    result = CliRunner().invoke(cli.app, ["run", str(suite), "--baseline", base.id])
+    assert result.exit_code == 1, result.output
+    assert "Cannot compare different suites" in result.output
+    assert len(list(store.root.glob("*.json"))) == 1
