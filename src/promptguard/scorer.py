@@ -38,6 +38,10 @@ def token_jaccard(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"Non-standard JSON constant: {value}")
+
+
 def score(output: str, expect: Expect) -> List[Failure]:
     """Return structured failures. Empty list means pass."""
     failures: list[Failure] = []
@@ -130,8 +134,8 @@ def score(output: str, expect: Expect) -> List[Failure]:
             candidate = "\n".join(lines)
 
         try:
-            data = json.loads(candidate)
-        except (json.JSONDecodeError, TypeError) as e:
+            data = json.loads(candidate, parse_constant=_reject_json_constant)
+        except (ValueError, TypeError) as e:
             failures.append(
                 _fail(
                     "json_valid",

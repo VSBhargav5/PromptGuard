@@ -1,3 +1,5 @@
+import pytest
+
 from promptguard.models import Expect
 from promptguard.scorer import score, token_jaccard
 
@@ -49,3 +51,16 @@ def test_min_max_chars():
     assert fails[0].check == "min_chars"
     fails = score("x" * 50, Expect(max_chars=10))
     assert fails[0].check == "max_chars"
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_json_validation_rejects_nonstandard_numeric_constants(constant):
+    fails = score('{"values": [' + constant + "]}", Expect(json_valid=True))
+    assert len(fails) == 1
+    assert fails[0].check == "json_valid"
+    assert "Non-standard JSON constant" in fails[0].message
+
+
+@pytest.mark.parametrize("output", ['{"score": -0.3}', '{"label": "NaN"}', '{"value": null}'])
+def test_json_validation_preserves_standard_values(output):
+    assert score(output, Expect(json_valid=True)) == []
