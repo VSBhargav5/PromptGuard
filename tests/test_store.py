@@ -80,3 +80,23 @@ def test_atomic_save_can_replace_existing_run_without_leftover_files(tmp_path):
     store.save(updated)
     assert store.get(run.id) == updated
     assert [path.name for path in tmp_path.iterdir()] == [f"{run.id}.json"]
+
+
+@pytest.mark.parametrize("content", ["[]", "null", "1", "{}", '{"passed": "many"}', "{broken"])
+def test_list_runs_skips_invalid_history_without_losing_valid_runs(tmp_path, content):
+    store = RunStore(tmp_path)
+    valid = _run("valid-run")
+    store.save(valid)
+    (tmp_path / "bad.json").write_text(content, encoding="utf-8")
+    rows = store.list_runs(limit=1)
+    assert len(rows) == 1
+    assert rows[0]["id"] == valid.id
+    assert rows[0]["started_at"] == valid.started_at.isoformat()
+
+
+def test_list_runs_filters_valid_history_by_suite(tmp_path):
+    store = RunStore(tmp_path)
+    store.save(_run("demo-run"))
+    other = _run("other-run").model_copy(update={"suite_name": "other"})
+    store.save(other)
+    assert [row["id"] for row in store.list_runs(suite="other")] == [other.id]

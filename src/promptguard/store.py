@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import json
 import re
 from tempfile import NamedTemporaryFile
 from pathlib import Path
 from typing import Optional
+
+from pydantic import ValidationError
 
 from .models import RunResult
 
@@ -48,21 +49,21 @@ class RunStore:
             if len(out) >= limit:
                 break
             try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                if suite and data.get("suite_name") != suite:
+                run = RunResult.model_validate_json(f.read_text(encoding="utf-8"))
+                if suite and run.suite_name != suite:
                     continue
                 out.append(
                     {
-                        "id": data.get("id", f.stem),
-                        "suite_name": data.get("suite_name"),
-                        "model": data.get("model"),
-                        "passed": data.get("passed"),
-                        "failed": data.get("failed"),
-                        "total": data.get("total"),
-                        "started_at": data.get("started_at"),
+                        "id": run.id,
+                        "suite_name": run.suite_name,
+                        "model": run.model,
+                        "passed": run.passed,
+                        "failed": run.failed,
+                        "total": run.total,
+                        "started_at": run.started_at.isoformat(),
                     }
                 )
-            except (json.JSONDecodeError, OSError):
+            except (ValidationError, OSError):
                 continue
         return out
 
