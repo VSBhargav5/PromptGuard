@@ -47,7 +47,7 @@ def filter_cases(
         if not cases:
             raise ValueError(f"No cases match tag(s): {', '.join(sorted(wanted_tags))}")
 
-    if case_ids:
+    if case_ids is not None:
         wanted = set(case_ids)
         selected = [c for c in cases if c.id in wanted]
         missing = wanted - {c.id for c in selected}
@@ -55,6 +55,8 @@ def filter_cases(
             raise ValueError(f"Unknown case id(s): {', '.join(sorted(missing))}")
         cases = selected
 
+    if not cases:
+        raise ValueError("No cases selected")
     return cases
 
 
@@ -201,6 +203,7 @@ def run_suite(
     timeout: Optional[float] = None,
 ) -> RunResult:
     """Execute cases (optionally in parallel) and return a RunResult."""
+    cases = filter_cases(suite, case_ids=case_ids, tags=tags)
     client_kwargs = {}
     if api_key:
         client_kwargs["api_key"] = api_key
@@ -210,7 +213,6 @@ def run_suite(
 
     use_model = model or suite.model
     use_temp = suite.temperature if temperature is None else temperature
-    cases = filter_cases(suite, case_ids=case_ids, tags=tags)
     workers = max(1, workers)
 
     result = RunResult(

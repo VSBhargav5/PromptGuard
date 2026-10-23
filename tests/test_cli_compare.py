@@ -100,3 +100,23 @@ def test_run_coverage_gate(store, monkeypatch, tmp_path, strict, expected, basel
     assert result.exit_code == expected, result.output
     if strict and not baseline_exists:
         assert "cannot verify case coverage" in result.output
+
+
+def test_from_failed_empty_intersection_does_not_run_entire_suite(store, monkeypatch, tmp_path):
+    from promptguard import runner
+
+    previous = _run([("failed", False), ("passed", True)])
+    store.save(previous)
+    suite = tmp_path / "suite.yaml"
+    suite.write_text(
+        "name: coverage-demo\ncases:\n  - id: failed\n    input: help\n"
+        "  - id: passed\n    input: hello\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runner, "OpenAI", lambda **kwargs: pytest.fail("Unexpected client"))
+    result = CliRunner().invoke(
+        cli.app, ["run", str(suite), "--from-failed", previous.id, "--case", "passed"]
+    )
+    assert result.exit_code == 1, result.output
+    assert "No cases selected" in result.output
+    assert len(list(store.root.glob("*.json"))) == 1
