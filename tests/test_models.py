@@ -40,3 +40,14 @@ def test_direct_suite_construction_rejects_duplicate_ids():
 def test_suite_preserves_distinct_case_identity_and_order():
     suite = Suite(name="demo", cases=[Case(id="refund"), Case(id="refund-followup")])
     assert [case.id for case in suite.cases] == ["refund", "refund-followup"]
+
+
+@pytest.mark.parametrize("pattern", ["[", "(", "*", r"\k"])
+def test_malformed_regex_is_rejected_before_execution(pattern):
+    with pytest.raises(ValidationError, match="Invalid expectation regex"):
+        Expect(regex=[pattern])
+
+
+def test_valid_regex_patterns_are_preserved():
+    patterns = [r"order #\d+", "(?i)refund", ""]
+    assert Expect(regex=patterns).regex == patterns

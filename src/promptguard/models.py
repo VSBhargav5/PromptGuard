@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Optional
 from uuid import uuid4
@@ -27,6 +28,16 @@ class Expect(BaseModel):
             if self.min_chars > self.max_chars:
                 raise ValueError("min_chars must not exceed max_chars")
         return self
+
+    @field_validator("regex")
+    @classmethod
+    def validate_regex(cls, patterns: list[str]) -> list[str]:
+        for pattern in patterns:
+            try:
+                re.compile(pattern, flags=re.IGNORECASE | re.DOTALL)
+            except re.error as exc:
+                raise ValueError(f"Invalid expectation regex {pattern!r}: {exc}") from exc
+        return patterns
 
 
 class Message(BaseModel):
