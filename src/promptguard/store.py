@@ -59,10 +59,12 @@ class RunStore:
         path = self.root / f"{run_id}.json"
         if path.exists():
             return RunResult.model_validate_json(path.read_text(encoding="utf-8"))
-        for f in self.root.glob("*.json"):
-            if f.stem.startswith(run_id):
-                return RunResult.model_validate_json(f.read_text(encoding="utf-8"))
-        return None
+        matches = sorted(f for f in self.root.glob("*.json") if f.stem.startswith(run_id))
+        if len(matches) > 1:
+            raise ValueError(f"Ambiguous run ID prefix '{run_id}'; use a longer ID")
+        if not matches:
+            return None
+        return RunResult.model_validate_json(matches[0].read_text(encoding="utf-8"))
 
     def latest_for_suite(
         self, suite_name: str, *,

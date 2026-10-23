@@ -120,3 +120,20 @@ def test_from_failed_empty_intersection_does_not_run_entire_suite(store, monkeyp
     assert result.exit_code == 1, result.output
     assert "No cases selected" in result.output
     assert len(list(store.root.glob("*.json"))) == 1
+
+
+@pytest.mark.parametrize("command", [["show-run", "common"], ["compare", "common", "common-one"]])
+def test_ambiguous_run_id_has_a_clear_cli_error(store, command):
+    for run_id in ("common-one", "common-two"):
+        run = _run([("shared", True)])
+        run.id = run_id
+        store.save(run)
+    result = CliRunner().invoke(cli.app, command)
+    assert result.exit_code == 1, result.output
+    assert "Ambiguous run ID prefix" in result.output
+
+
+def test_path_run_id_has_a_clear_cli_error(store):
+    result = CliRunner().invoke(cli.app, ["show-run", "../outside"])
+    assert result.exit_code == 1, result.output
+    assert "Run ID" in result.output

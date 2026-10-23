@@ -33,3 +33,20 @@ def test_save_and_get_uuid_and_named_ids(tmp_path):
         run = _run(run_id)
         assert store.save(run).parent == tmp_path
         assert store.get(run_id) == run
+
+
+def test_ambiguous_prefix_is_not_resolved_arbitrarily(tmp_path):
+    store = RunStore(tmp_path)
+    store.save(_run("alpha-one"))
+    store.save(_run("alpha-two"))
+    with pytest.raises(ValueError, match="Ambiguous run ID prefix"):
+        store.get("alpha")
+    assert store.get("alpha-o").id == "alpha-one"
+    assert store.get("missing") is None
+
+
+def test_exact_id_takes_precedence_over_prefix_matches(tmp_path):
+    store = RunStore(tmp_path)
+    for run_id in ("alpha", "alpha-one", "alpha-two"):
+        store.save(_run(run_id))
+    assert store.get("alpha").id == "alpha"

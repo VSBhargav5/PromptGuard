@@ -27,6 +27,14 @@ app = typer.Typer(
 console = Console()
 
 
+def _load_run(store: RunStore, run_id: str) -> Optional[RunResult]:
+    try:
+        return store.get(run_id)
+    except (ValueError, OSError) as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(1) from exc
+
+
 def _render_failure_block(cr: CaseResult) -> None:
     for f in cr.failures:
         if isinstance(f, str):
@@ -300,7 +308,7 @@ def run_cmd(
         if from_failed in ("last", "latest"):
             src = store.latest_for_suite(suite.name)
         else:
-            src = store.get(from_failed)
+            src = _load_run(store, from_failed)
         if not src:
             console.print(f"[red]No run found for --from-failed {from_failed}[/red]")
             raise typer.Exit(1)
@@ -385,7 +393,7 @@ def run_cmd(
                 suite.name, only_passing=True, exclude_id=result.id
             )
         else:
-            base_run = store.get(baseline)
+            base_run = _load_run(store, baseline)
 
         if not base_run:
             if fail_on_removed:
@@ -446,8 +454,8 @@ def compare_cmd(
 ):
     """Diff two saved runs: regressions, fixes, output changes."""
     store = RunStore()
-    baseline = store.get(baseline_id)
-    current = store.get(current_id)
+    baseline = _load_run(store, baseline_id)
+    current = _load_run(store, current_id)
     if not baseline:
         console.print(f"[red]Baseline run not found: {baseline_id}[/red]")
         raise typer.Exit(1)
@@ -502,7 +510,7 @@ def show_run_cmd(
     html: Optional[Path] = typer.Option(None, "--html"),
 ):
     """Show details of a past run."""
-    run = RunStore().get(run_id)
+    run = _load_run(RunStore(), run_id)
     if not run:
         console.print(f"[red]Run not found: {run_id}[/red]")
         raise typer.Exit(1)
