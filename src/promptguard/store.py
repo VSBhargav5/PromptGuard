@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -10,12 +11,18 @@ from .models import RunResult
 DEFAULT_DIR = Path.home() / ".promptguard" / "runs"
 
 
+def _validate_run_id(run_id: str) -> None:
+    if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", run_id):
+        raise ValueError("Run ID must contain only letters, digits, underscores, or hyphens")
+
+
 class RunStore:
     def __init__(self, root: Path | str = DEFAULT_DIR):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
 
     def save(self, run: RunResult) -> Path:
+        _validate_run_id(run.id)
         path = self.root / f"{run.id}.json"
         path.write_text(run.model_dump_json(indent=2), encoding="utf-8")
         return path
@@ -48,6 +55,7 @@ class RunStore:
         return out
 
     def get(self, run_id: str) -> Optional[RunResult]:
+        _validate_run_id(run_id)
         path = self.root / f"{run_id}.json"
         if path.exists():
             return RunResult.model_validate_json(path.read_text(encoding="utf-8"))
