@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from promptguard.models import RunResult
@@ -50,3 +52,31 @@ def test_exact_id_takes_precedence_over_prefix_matches(tmp_path):
     for run_id in ("alpha", "alpha-one", "alpha-two"):
         store.save(_run(run_id))
     assert store.get("alpha").id == "alpha"
+
+
+def test_failed_atomic_replace_preserves_previous_run_and_cleans_temporary_file(tmp_path, monkeypatch):
+    store = RunStore(tmp_path)
+    original = _run()
+    destination = store.save(original)
+    original_bytes = destination.read_bytes()
+    updated = original.model_copy(update={"model": "changed"})
+
+    def fail_replace(self, target):
+        raise OSError("simulated replacement failure")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(OSError, match="simulated replacement failure"):
+        store.save(updated)
+    assert destination.read_bytes() == original_bytes
+    assert store.get(original.id) == original
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_atomic_save_can_replace_existing_run_without_leftover_files(tmp_path):
+    store = RunStore(tmp_path)
+    run = _run()
+    store.save(run)
+    updated = run.model_copy(update={"model": "changed"})
+    store.save(updated)
+    assert store.get(run.id) == updated
+    assert [path.name for path in tmp_path.iterdir()] == [f"{run.id}.json"]

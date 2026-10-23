@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from tempfile import NamedTemporaryFile
 from pathlib import Path
 from typing import Optional
 
@@ -24,7 +25,18 @@ class RunStore:
     def save(self, run: RunResult) -> Path:
         _validate_run_id(run.id)
         path = self.root / f"{run.id}.json"
-        path.write_text(run.model_dump_json(indent=2), encoding="utf-8")
+        content = run.model_dump_json(indent=2)
+        temporary: Optional[Path] = None
+        try:
+            with NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=self.root, prefix=".run-", suffix=".tmp", delete=False
+            ) as stream:
+                temporary = Path(stream.name)
+                stream.write(content)
+            temporary.replace(path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return path
 
     def list_runs(self, limit: int = 20, suite: Optional[str] = None) -> list[dict]:
