@@ -9,12 +9,15 @@ on:
 jobs:
   regression:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install
         run: |
@@ -26,6 +29,7 @@ jobs:
         run: pytest -q
 
       - name: Check API key
+        if: matrix.python-version == '3.12'
         id: key
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -53,7 +57,7 @@ jobs:
         if: always() && steps.key.outputs.has_key == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: promptguard-reports
+          name: promptguard-reports-${{ matrix.python-version }}
           path: |
             junit-*.xml
             report-*.md

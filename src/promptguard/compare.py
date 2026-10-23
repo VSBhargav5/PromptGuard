@@ -53,6 +53,10 @@ class CompareResult:
         return [d for d in self.deltas if d.kind == "new"]
 
     @property
+    def removed_cases(self) -> list[CaseDelta]:
+        return [d for d in self.deltas if d.kind == "removed"]
+
+    @property
     def output_changed_cases(self) -> list[CaseDelta]:
         return [d for d in self.deltas if d.output_changed]
 

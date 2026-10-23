@@ -71,3 +71,35 @@ def test_html_contains_suite_and_fail():
     assert "broken" in html
     assert "FAIL" in html
     assert "<!DOCTYPE html>" in html
+
+
+def test_compare_pr_summary_reports_coverage_changes():
+    base = _run(failed=True)
+    cur = _run(failed=False)
+    cur.case_results.append(CaseResult(case_id="new", passed=True, output="hello"))
+    cur.passed, cur.total = 2, 2
+    text = to_compare_pr_summary(compare_runs(base, cur))
+    assert "**Removed cases (1)**" in text
+    assert "`broken` — baseline FAIL; not evaluated in current run" in text
+    assert "**New cases (1)**" in text
+    assert "`new` — PASS" in text
+    assert "No pass/fail changes among shared cases" in text
+
+
+def test_compare_pr_summary_no_shared_cases():
+    base = _run(failed=False)
+    cur = _run(failed=False)
+    cur.case_results[0].case_id = "replacement"
+    text = to_compare_pr_summary(compare_runs(base, cur))
+    assert "No shared cases; pass/fail changes cannot be assessed" in text
+    assert "No pass/fail changes" not in text
+
+
+def test_compare_pr_summary_empty_runs():
+    base = _run(failed=False)
+    cur = _run(failed=False)
+    for run in (base, cur):
+        run.case_results = []
+        run.passed, run.failed, run.total = 0, 0, 0
+    text = to_compare_pr_summary(compare_runs(base, cur))
+    assert "No shared cases; pass/fail changes cannot be assessed" in text

@@ -74,8 +74,21 @@ def to_compare_pr_summary(cmp: CompareResult) -> str:
         lines.extend(["", f"**Fixed ({len(cmp.fixed)})**"])
         for d in cmp.fixed:
             lines.append(f"- `{d.case_id}`")
-    if not cmp.regressed and not cmp.fixed:
-        lines.extend(["", "_No pass/fail changes._"])
+    if cmp.new_cases:
+        lines.extend(["", f"**New cases ({len(cmp.new_cases)})**"])
+        for d in cmp.new_cases:
+            status = "PASS" if d.current_passed else "FAIL"
+            lines.append(f"- `{d.case_id}` — {status}")
+    if cmp.removed_cases:
+        lines.extend(["", f"**Removed cases ({len(cmp.removed_cases)})**"])
+        for d in cmp.removed_cases:
+            status = "PASS" if d.baseline_passed else "FAIL"
+            lines.append(f"- `{d.case_id}` — baseline {status}; not evaluated in current run")
+    shared = [d for d in cmp.deltas if d.kind not in ("new", "removed")]
+    if not shared:
+        lines.extend(["", "_No shared cases; pass/fail changes cannot be assessed._"])
+    elif not cmp.regressed and not cmp.fixed:
+        lines.extend(["", "_No pass/fail changes among shared cases._"])
 
     lines.append("")
     return "\n".join(lines)

@@ -44,3 +44,15 @@ def test_prompt_model_flags():
     cmp = compare_runs(base, cur)
     assert cmp.prompt_changed
     assert cmp.model_changed
+
+
+def test_new_and_removed_cases_are_not_regressions():
+    base = _run("s", [("shared", True, "ok"), ("removed", False, "bad")])
+    cur = _run("s", [("shared", True, "ok"), ("new", False, "bad")])
+    cmp = compare_runs(base, cur)
+    assert [d.case_id for d in cmp.new_cases] == ["new"]
+    assert [d.case_id for d in cmp.removed_cases] == ["removed"]
+    assert cmp.removed_cases[0].baseline_passed is False
+    assert cmp.removed_cases[0].current_passed is None
+    assert cmp.regressed == []
+    assert cmp.fixed == []
