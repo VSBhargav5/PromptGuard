@@ -18,6 +18,7 @@ Change a prompt or model → re-run the suite → see **what regressed** before 
 | Artifacts | **PR summary** (paste into GitHub), **HTML report**, Markdown, JUnit, JSON |
 | History | Prompt snapshot, local store, baseline compare + output-change flags |
 | Coverage | Added/removed cases in PR summaries; optional `--fail-on-removed` CI gate |
+| Reliability | Validated expectation bounds and case IDs, safe run lookup, atomic history writes, XML-safe JUnit output |
 | CI | Offline unit tests always; live suite when `OPENAI_API_KEY` is set |
 
 ---
@@ -81,6 +82,11 @@ mode and how to reproduce the behavior without an API key.
 ---
 
 ## Status
+
+Latest main development adds [reliability boundaries](docs/reliability-boundaries.md)
+around suite configuration, selected cases, history, comparisons, and CI reports.
+The offline suite runs on Python 3.11/3.12 on Linux and Windows. These checks do
+not establish live model quality or validate transport timeout behavior.
 
 **v0.6.0** — PR-comment summary + self-contained HTML report  
 **v0.5.0** — tags, validate, latency stats, JSON export, CI  
